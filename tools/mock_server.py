@@ -317,9 +317,37 @@ def vendo_view(v):
     return out
 
 
+def coin_late_extend(vid, peso):
+    """A coin that went in during a reservation that has since finished:
+    it belongs to that customer, so it tops up the session they got.
+    Returns False when that isn't possible (then it becomes an orphan)."""
+    s = slots[vid]
+    p = profile_by_peso(peso)
+    sess = sessions.get(s["doneCode"])
+    if not p or not sess or sess.get("isSubscriber") or sess["mode"] != "hotspot":
+        return False
+    sess["remainingSeconds"] += p["minutes"] * 60
+    if sess["remainingBytes"] < UNLIMITED_BYTES:
+        sess["remainingBytes"] = UNLIMITED_BYTES if p["dataMb"] == 0 else \
+            sess["remainingBytes"] + p["dataMb"] * 1024 * 1024
+    add_coin_revenue(vid, peso)
+    log_event("coin_late_extended", f"{s['doneCode']} PHP {peso} (vendo {vid})")
+    return True
+
+
 def vendo_coin(vid, peso, rid):
-    """A coin reported by sub vendo `vid` (already deduped and boxed)."""
-    coin_add(vid, peso)
+    """A coin reported by sub vendo `vid` (already deduped and boxed), tagged
+    with the reservation id the sub saw when it went in (0 = none). It only
+    ever goes to the customer whose reservation was open at that moment."""
+    s = slots[vid]
+    if rid and s["reserved"] and rid == s["rid"]:
+        s["last"] = mock_now()
+        coin_credit(s, peso)
+        return
+    if rid and rid == s["doneRid"] and s["doneCode"] and mock_now() - s["doneAt"] < COIN_RESULT_KEEP_SEC:
+        if coin_late_extend(vid, peso):
+            return
+    coin_orphan(vid, peso)
 
 
 def vendo_tick():
@@ -519,7 +547,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"brandName": settings["brandName"], "brandColor": settings["brandColor"],
                               "soundEnabled": settings["soundEnabled"], "announcement": settings["announcement"],
                               "rates": [{"peso": r["pesoAmount"], "minutes": r["minutes"], "dataMb": r["dataMb"],
-                                         "validityMinutes": r["validityMinutes"]} for r in rate_profiles]})
+                                         "validityMinutes": r["validityMinutes"]} for r in rate_profiles],
+                              # Coin boxes the customer can pick (paired ones only).
+                              "vendos": [{"id": v["id"], "name": v["name"], "online": vendo_online(v)}
+                                         for i, v in sorted(vendos.items())
+                                         if i == 0 or v.get("key") is not None]})
         elif path == "/api/status":
             sid = (qs.get("session") or [""])[0]
             s = sessions.get(sid)
@@ -596,6 +628,7 @@ class Handler(BaseHTTPRequestHandler):
                 "subscriptionRevenue": admin_stats["subscriptionRevenueToday"],
                 "users": admin_stats["usersToday"],
                 "dataUsedBytes": admin_stats["dataUsedTodayBytes"],
+                "byVendo": [{"id": k, "peso": v} for k, v in sorted(admin_stats["coinByVendo"].items())],
             }
             self._json(200, {"history": sales_history, "today": today})
         elif path == "/api/admin/overview":
@@ -908,6 +941,9 @@ class Handler(BaseHTTPRequestHandler):
             vid = body.get("vendo", 0)
             if not isinstance(vid, int) or isinstance(vid, bool) or vid not in slots:
                 self._json(404, {"error": "vendo_unknown"})
+                return
+            if not vendo_online(vendos[vid]):
+                self._json(409, {"error": "vendo_offline"})
                 return
             s = slots[vid]
             token = body.get("token", "")

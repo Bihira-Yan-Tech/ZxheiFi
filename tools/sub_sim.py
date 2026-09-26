@@ -27,7 +27,7 @@ import zx_protocol as zx  # noqa: E402
 
 
 class SubSim:
-    def __init__(self, host="localhost", port=8098, mac="AA:BB:CC:DD:EE:01"):
+    def __init__(self, host="127.0.0.1", port=8098, mac="AA:BB:CC:DD:EE:01"):
         self.host, self.port, self.mac = host, port, mac
         self.vid = 0
         self.key = None
@@ -123,7 +123,7 @@ class SubSim:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="localhost")
+    ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--mac", default="AA:BB:CC:DD:EE:99")
     ap.add_argument("--code", required=True, help="pairing code from Admin > Vendos > Add Vendo")

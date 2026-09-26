@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def check(name, condition, detail=""):
 
 
 def request(method, path, body=None, headers=None):
-    conn = http.client.HTTPConnection("localhost", PORT, timeout=5)
+    conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=5)
     hdrs = dict(headers or {})
     payload = None
     if body is not None:
@@ -306,7 +307,138 @@ def test_offline_logged_once():
     check("back online logged", any(e["type"] == "vendo_online" for e in logs), [e["type"] for e in logs])
 
 
+# ---------------------------------------------------------------- Task 6
+
+def start_coin(vid, mac="AA:00:00:00:00:01", session=""):
+    return request("POST", "/api/coin/start", {"mac": mac, "vendo": vid, "session": session})
+
+
+def coin_status(token):
+    return request("GET", "/api/coin/status?token=" + token)[1]
+
+
+def today_by_vendo():
+    today = admin_get("/api/admin/sales")[1].get("today", {})
+    return {e["id"]: e["peso"] for e in today.get("byVendo", [])}
+
+
+def test_branding_lists_vendos():
+    names = [v["name"] for v in request("GET", "/api/branding")[1].get("vendos", [])]
+    check("branding: Main only", names == ["Main"], names)
+    sub = paired_sub("Tindahan")
+    sub.poll()
+    vs = request("GET", "/api/branding")[1].get("vendos", [])
+    check("branding: Main + Tindahan online", [(v["id"], v["name"], v["online"]) for v in vs] ==
+          [(0, "Main", True), (1, "Tindahan", True)], vs)
+    add_code("Not yet paired")
+    check("unpaired codes not shown to customers", len(request("GET", "/api/branding")[1]["vendos"]) == 2)
+
+
+def test_offline_sub_refused():
+    sub = paired_sub()
+    advance(11)
+    st, d = start_coin(1)
+    check("Insert Coin on an offline sub -> 409 vendo_offline", st == 409 and d.get("error") == "vendo_offline",
+          f"{st} {d}")
+    sub.poll()
+    st, d = start_coin(1)
+    check("online again -> 200", st == 200 and d.get("vendo") == 1, f"{st} {d}")
+
+
+def test_two_boxes_at_once_and_sub_coin_flow():
+    sub = paired_sub()
+    sub.poll()
+    st0, d0 = start_coin(0, "AA:00:00:00:00:01")
+    st1, d1 = start_coin(1, "AA:00:00:00:00:02")
+    check("two customers on two boxes at once", st0 == 200 and st1 == 200, f"{st0} {d0} / {st1} {d1}")
+    sub.poll()
+    check("sub relay on with a reservation id", sub.relay and sub.rid > 0, (sub.relay, sub.rid))
+    sub.drop_coin(10)
+    sub.flush()
+    s = coin_status(d1["token"])
+    check("sub coin credited to that customer", s.get("state") == "inserting" and s.get("pesos") == 10
+          and s.get("vendo") == 1, s)
+    check("main customer untouched", coin_status(d0["token"]).get("pesos") == 0)
+    st, done = request("POST", "/api/coin/done", {"token": d1["token"]})
+    check("done -> session", st == 200 and done.get("sessionId"), f"{st} {done}")
+    check("sales split per vendo", today_by_vendo() == {1: 10}, today_by_vendo())
+    sub.poll()
+    check("relay off after done", sub.relay is False and sub.rid == 0, (sub.relay, sub.rid))
+
+
+def test_late_coin_extends_the_payer():
+    sub = paired_sub()
+    sub.poll()
+    st, d = start_coin(1)
+    sub.poll()
+    rid = sub.rid
+    sub.drop_coin(10)
+    sub.flush()
+    _, done = request("POST", "/api/coin/done", {"token": d["token"]})
+    before = request("GET", "/api/status?session=" + done["sessionId"])[1]["timeRemainingSec"]
+    sub.drop_coin(10, rid=rid)   # went in before the relay closed, delivered late
+    res = sub.flush()
+    after = request("GET", "/api/status?session=" + done["sessionId"])[1]["timeRemainingSec"]
+    check("late coin acked", res and res[-1][1].get("ok") is True, res)
+    check("late coin added 60 min to the payer", 3590 <= after - before <= 3600, (before, after))
+    check("late coin counted in sales", today_by_vendo() == {1: 20}, today_by_vendo())
+    logs = [e["type"] for e in admin_get("/api/admin/logs")[1]]
+    check("coin_late_extended logged", "coin_late_extended" in logs, logs)
+
+
+def test_old_rid_never_credits_next_customer():
+    sub = paired_sub()
+    sub.poll()
+    _, a = start_coin(1, "AA:00:00:00:00:0A")
+    sub.poll()
+    old_rid = sub.rid
+    sub.drop_coin(10)
+    sub.flush()
+    request("POST", "/api/coin/done", {"token": a["token"]})
+    advance(601)  # customer A's result is no longer held
+    sub.poll()    # (and the sub keeps polling, so it's still online)
+    _, b = start_coin(1, "AA:00:00:00:00:0B")
+    sub.poll()
+    sub.drop_coin(20, rid=old_rid)
+    sub.flush()
+    check("customer B not credited with A's stray coin", coin_status(b["token"]).get("pesos") == 0,
+          coin_status(b["token"]))
+
+
+def test_orphan_claimed_then_unclaimed():
+    sub = paired_sub()
+    sub.poll()
+    sub.drop_coin(10, rid=0)
+    sub.flush()
+    _, d = start_coin(1)
+    check("orphan coin claimed by the next Insert Coin", coin_status(d["token"]).get("pesos") == 10,
+          coin_status(d["token"]))
+    sub.drop_coin(20, rid=0)   # relay was off when it went in: not this customer's
+    sub.flush()
+    check("rid-0 coin not given to the open reservation", coin_status(d["token"]).get("pesos") == 10,
+          coin_status(d["token"]))
+    advance(61)                # the P10 customer auto-finishes (45 s), the P20 orphan expires (60 s)
+    request("GET", "/api/health")
+    check("sale + unclaimed orphan both counted", today_by_vendo().get(1) == 30, today_by_vendo())
+    logs = [e["type"] for e in admin_get("/api/admin/logs")[1]]
+    check("coin_late_unclaimed logged", "coin_late_unclaimed" in logs, logs)
+
+
+def test_main_sales_by_vendo():
+    _, d = start_coin(0)
+    request("POST", "/dev/coin", {"peso": 20})
+    request("POST", "/api/coin/done", {"token": d["token"]})
+    check("main unit sales under vendo 0", today_by_vendo() == {0: 20}, today_by_vendo())
+
+
 TESTS = [
+    test_branding_lists_vendos,
+    test_offline_sub_refused,
+    test_two_boxes_at_once_and_sub_coin_flow,
+    test_late_coin_extends_the_payer,
+    test_old_rid_never_credits_next_customer,
+    test_orphan_claimed_then_unclaimed,
+    test_main_sales_by_vendo,
     test_pairing,
     test_pair_wrong_code_rate_limit,
     test_pair_expired_code,
@@ -332,7 +464,7 @@ def wait_for_server(timeout_sec=10):
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
-            conn = http.client.HTTPConnection("localhost", PORT, timeout=1)
+            conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=1)
             conn.request("GET", "/api/health")
             conn.getresponse().read()
             conn.close()
@@ -343,11 +475,15 @@ def wait_for_server(timeout_sec=10):
 
 
 def run_one(test):
+    # Server errors go to a file, not a pipe: an unread pipe fills up after a
+    # few tracebacks and freezes the server mid-test.
+    log_path = Path(tempfile.gettempdir()) / f"zx_vendo_test_{PORT}.log"
+    log = open(log_path, "w", encoding="utf-8")
     proc = subprocess.Popen([sys.executable, str(TOOLS_DIR / "mock_server.py"), str(PORT)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                            stdout=subprocess.DEVNULL, stderr=log, text=True)
     try:
         if not wait_for_server():
-            FAIL.append(f"{test.__name__}: mock server never came up: {proc.stderr.read() if proc.poll() is not None else ''}")
+            FAIL.append(f"{test.__name__}: mock server never came up (see {log_path})")
             return
         before = len(FAIL)
         try:
@@ -362,6 +498,11 @@ def run_one(test):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        log.close()
+        errors = log_path.read_text(encoding="utf-8")
+        if "Traceback" in errors:
+            FAIL.append(f"{test.__name__}: mock server raised:\n{errors[-1500:]}")
+            print(f"FAIL {test.__name__}: mock server raised\n{errors[-1500:]}", flush=True)
 
 
 def main():

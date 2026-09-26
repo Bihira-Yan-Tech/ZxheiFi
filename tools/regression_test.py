@@ -45,7 +45,7 @@ def check(name, condition, detail=""):
 
 
 def request(method, path, body=None, headers=None, is_json=True):
-    conn = http.client.HTTPConnection("localhost", PORT, timeout=5)
+    conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=5)
     payload = None
     hdrs = dict(headers or {})
     if body is not None:
@@ -387,7 +387,7 @@ def wait_for_server(timeout_sec=10):
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
-            conn = http.client.HTTPConnection("localhost", PORT, timeout=1)
+            conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=1)
             conn.request("GET", "/api/health")
             conn.getresponse()
             conn.close()
