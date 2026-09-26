@@ -29,6 +29,7 @@
 #include "pppoe.h"
 #include "admin_api.h"
 #include "telegram.h"
+#include "vendo_registry.h"
 #include "coin_slot.h"
 #include "gui_handler.h"
 #include "network_config.h"
@@ -41,6 +42,7 @@ PPPoEManager pppoeManager;
 QoSManager qosManager;
 AdminAPI adminAPI;
 TelegramNotifier telegramNotifier;
+VendoRegistry vendoRegistry;
 CoinSlot coinSlot;
 GUIHandler guiHandler;
 NetworkConfig networkConfig;

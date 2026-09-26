@@ -11,7 +11,7 @@
 // Reported by /api/health. mikrotik/gui/script.js (REQUIRED_FIRMWARE)
 // warns the admin when the NodeMCU runs an older build than the pages
 // uploaded to the router - a mismatch made Settings silently misbehave.
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "2.0.0-dev"
 
 // ============================================================================
 // NETWORK CONFIGURATION
@@ -242,6 +242,24 @@
 #define SALES_HISTORY_FILE  "/sales.json"
 #define TODAY_SALES_FILE    "/today.json"   // today's running totals - survive a reboot
 #define NETWORK_CONFIG_FILE "/network.json"  // Setup Wizard's saved WiFi/MikroTik/initial-admin credentials
+#define VENDOS_FILE         "/vendos.json"       // Main (id 0) + paired sub vendos - see vendo_registry.h
+#define COLLECTIONS_FILE    "/collections.json"  // coin-box collection history
+
+// ============================================================================
+// SUB VENDOS (v2) - see vendo_registry.h / vendo_api.h / subvendo/
+// ============================================================================
+// An ESP8266 main unit has ~27KB of free heap at runtime, so it serves at
+// most 3 sub vendos; an ESP32 main (part 4 of v2) serves 10.
+#if defined(ESP32)
+#define MAX_SUB_VENDOS  10
+#define BOARD_NAME      "esp32"
+#define ZX_RANDOM32()   esp_random()
+#else
+#define MAX_SUB_VENDOS  3
+#define BOARD_NAME      "esp8266"
+#define ZX_RANDOM32()   RANDOM_REG32
+#endif
+#define MAX_COLLECTIONS 50   // coin-box collections kept (oldest dropped)
 
 // ============================================================================
 // SIZE CONSTRAINTS
