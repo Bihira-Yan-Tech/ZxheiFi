@@ -22,6 +22,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import zx_protocol as zx  # tools/ - the signed sub-vendo protocol
+
 GUI_DIR = Path(__file__).resolve().parent.parent / "mikrotik" / "gui"
 
 # Mirrors firmware/config.h's UNLIMITED_SECONDS/UNLIMITED_BYTES sentinels.
@@ -248,6 +250,82 @@ def slot_for_token(token):
     return None, None
 
 
+# ---- Vendos - mirrors firmware/vendo_registry.h + vendo_api.h --------------
+# Vendo 0 is the main unit itself (its own coin acceptor); 1..MAX_SUB_VENDOS
+# are paired sub vendos. A sub is added with a one-time pairing code
+# (Admin > Vendos > Add Vendo) and then talks the signed protocol below.
+BOARD = "esp8266"
+MAX_SUB_VENDOS = 3        # firmware: 3 on an ESP8266 main, 10 on an ESP32 main
+VENDO_PINS = ("D1", "D2", "D5", "D6", "D7")
+MAX_COLLECTIONS = 50
+
+vendos = {0: {"id": 0, "name": "Main", "boxTotal": 0, "commissionPct": 0}}
+pending_pairs = []   # [{"code", "name", "createdAt", "targetId"}] - targetId 0 = a new vendo
+collections = []     # oldest first, capped at MAX_COLLECTIONS
+pair_failures = []   # timestamps of failed /api/vendo/pair attempts (rate limit)
+
+
+def new_sub_vendo(vid, name):
+    return {"id": vid, "name": name, "boxTotal": 0, "commissionPct": 0, "mac": "", "key": None,
+            "lastCoinSeq": 0, "coinPin": "D5", "relayPin": "D7", "relayActiveHigh": True,
+            "pesosPerPulse": 1, "cfgVer": 1, "lastSeen": 0.0, "lastN": None, "offlineLogged": False}
+
+
+def vendo_online(v):
+    if v["id"] == 0:
+        return True
+    return v.get("key") is not None and v.get("lastSeen", 0) > 0 and \
+        mock_now() - v["lastSeen"] < zx.VENDO_OFFLINE_MS / 1000
+
+
+def expire_pending():
+    ttl = zx.PAIR_CODE_TTL_MS / 1000
+    pending_pairs[:] = [p for p in pending_pairs if mock_now() - p["createdAt"] < ttl]
+
+
+def free_vendo_id():
+    taken = set(vendos) | {p["targetId"] for p in pending_pairs if p["targetId"]}
+    return next((i for i in range(1, MAX_SUB_VENDOS + 1) if i not in taken), 0)
+
+
+def add_pending(name, target_id=0):
+    expire_pending()
+    if len(pending_pairs) >= zx.MAX_PENDING_PAIRS:
+        return None, "too_many_pending"
+    new_ones = sum(1 for p in pending_pairs if not p["targetId"])
+    if not target_id and (len(vendos) - 1) + new_ones >= MAX_SUB_VENDOS:
+        return None, "vendo_limit"
+    code = zx.new_pair_code()
+    pending_pairs.append({"code": code, "name": name, "createdAt": mock_now(), "targetId": target_id})
+    return code, ""
+
+
+def vendo_config(v):
+    return {"cfgVer": v["cfgVer"], "name": v["name"], "coinPin": v["coinPin"], "relayPin": v["relayPin"],
+            "relayActiveHigh": v["relayActiveHigh"], "pesosPerPulse": v["pesosPerPulse"]}
+
+
+def vendo_view(v):
+    out = {"id": v["id"], "name": v["name"], "online": vendo_online(v),
+           "todayPeso": admin_stats["coinByVendo"].get(v["id"], 0),
+           "boxTotal": v["boxTotal"], "commissionPct": v["commissionPct"],
+           "paired": v["id"] == 0 or v.get("key") is not None}
+    if v["id"]:
+        out["lastSeenSec"] = int(mock_now() - v["lastSeen"]) if v.get("lastSeen") else -1
+        for k in ("coinPin", "relayPin", "relayActiveHigh", "pesosPerPulse"):
+            out[k] = v[k]
+    return out
+
+
+def clean_name(raw):
+    name = str(raw if raw is not None else "").strip()
+    return name if 1 <= len(name) <= 32 else None
+
+
+def is_int(x):
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def log_event(event_type, detail):
     activity_log.append({"epoch": int(time.time()), "type": event_type, "detail": detail})
     if len(activity_log) > 300:
@@ -431,6 +509,21 @@ class Handler(BaseHTTPRequestHandler):
             if not admin:
                 return
             self._json(200, activity_log)
+        elif path == "/api/admin/vendos":
+            admin = self._require_admin()
+            if not admin:
+                return
+            expire_pending()
+            ttl = zx.PAIR_CODE_TTL_MS / 1000
+            pend = [{"name": p["name"], "code": p["code"], "targetId": p["targetId"],
+                     "expiresInSec": max(0, int(ttl - (mock_now() - p["createdAt"])))}
+                    for p in pending_pairs] if admin["role"] == "super" else []
+            self._json(200, {"board": BOARD, "limit": MAX_SUB_VENDOS,
+                             "vendos": [vendo_view(vendos[i]) for i in sorted(vendos)], "pending": pend})
+        elif path == "/api/admin/vendos/collections":
+            if not self._require_admin():
+                return
+            self._json(200, list(reversed(collections)))
         elif path == "/api/admin/sales":
             admin = self._require_admin()
             if not admin:
@@ -805,8 +898,116 @@ class Handler(BaseHTTPRequestHandler):
             if vid not in slots:
                 self._json(404, {"error": "vendo_unknown"})
                 return
-            coin_add(vid, int(body.get("peso", 0)))
+            peso = int(body.get("peso", 0))
+            vendos[vid]["boxTotal"] += peso
+            coin_add(vid, peso)
             self._json(200, {"ok": True})
+        elif path == "/api/admin/vendos/add":
+            if not self._require_admin(require_super=True):
+                return
+            name = clean_name((self._read_json_body() or {}).get("name"))
+            if not name:
+                self._json(400, {"error": "bad_name"})
+                return
+            code, err = add_pending(name)
+            if err:
+                self._json(409, {"error": err, "limit": MAX_SUB_VENDOS, "board": BOARD})
+                return
+            log_event("vendo_pair_code", name)
+            self._json(200, {"code": code, "expiresInSec": zx.PAIR_CODE_TTL_MS // 1000})
+        elif path == "/api/admin/vendos/update":
+            if not self._require_admin(require_super=True):
+                return
+            body = self._read_json_body() or {}
+            v = vendos.get(body.get("id")) if is_int(body.get("id")) else None
+            if not v:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            # Validate everything first - a rejected request changes nothing.
+            name = v["name"]
+            if "name" in body:
+                name = clean_name(body["name"])
+                if not name:
+                    self._json(400, {"error": "bad_name"})
+                    return
+            commission = body.get("commissionPct", v["commissionPct"])
+            if not is_int(commission) or not 0 <= commission <= 100:
+                self._json(400, {"error": "bad_commission"})
+                return
+            if v["id"]:
+                coin_pin = body.get("coinPin", v["coinPin"])
+                relay_pin = body.get("relayPin", v["relayPin"])
+                pulse = body.get("pesosPerPulse", v["pesosPerPulse"])
+                active_high = body.get("relayActiveHigh", v["relayActiveHigh"])
+                if coin_pin not in VENDO_PINS or (relay_pin != "none" and relay_pin not in VENDO_PINS):
+                    self._json(400, {"error": "invalid_pin"})
+                    return
+                if coin_pin == relay_pin:
+                    self._json(400, {"error": "coin_and_relay_same_pin"})
+                    return
+                if not is_int(pulse) or not 1 <= pulse <= 100:
+                    self._json(400, {"error": "bad_pulse_value"})
+                    return
+                if not isinstance(active_high, bool):
+                    self._json(400, {"error": "bad_relay_level"})
+                    return
+                changed = (name, coin_pin, relay_pin, pulse, active_high) != \
+                    (v["name"], v["coinPin"], v["relayPin"], v["pesosPerPulse"], v["relayActiveHigh"])
+                v.update(coinPin=coin_pin, relayPin=relay_pin, pesosPerPulse=pulse, relayActiveHigh=active_high)
+                if changed:
+                    v["cfgVer"] += 1
+            v.update(name=name, commissionPct=commission)
+            self._json(200, {"ok": True, "cfgVer": v.get("cfgVer", 0)})
+        elif path == "/api/admin/vendos/collected":
+            admin = self._require_admin()
+            if not admin:
+                return
+            body = self._read_json_body() or {}
+            v = vendos.get(body.get("id")) if is_int(body.get("id")) else None
+            if not v:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            amount, v["boxTotal"] = v["boxTotal"], 0
+            collections.append({"vendoId": v["id"], "name": v["name"], "amount": amount,
+                                "admin": admin["username"], "at": int(time.time())})
+            del collections[:-MAX_COLLECTIONS]
+            log_event("vendo_collected", f"{v['name']} PHP {amount} by {admin['username']}")
+            self._json(200, {"collected": amount})
+        elif path == "/api/admin/vendos/remove":
+            if not self._require_admin(require_super=True):
+                return
+            vid = (self._read_json_body() or {}).get("id")
+            if vid == 0:
+                self._json(400, {"error": "cannot_remove_main"})
+                return
+            v = vendos.get(vid) if is_int(vid) else None
+            if not v:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            del vendos[vid]
+            slots.pop(vid, None)
+            pending_pairs[:] = [p for p in pending_pairs if p["targetId"] != vid]
+            log_event("vendo_removed", v["name"])
+            self._json(200, {"ok": True})
+        elif path == "/api/admin/vendos/repair":
+            if not self._require_admin(require_super=True):
+                return
+            vid = (self._read_json_body() or {}).get("id")
+            if vid == 0:
+                self._json(400, {"error": "cannot_repair_main"})
+                return
+            v = vendos.get(vid) if is_int(vid) else None
+            if not v:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            pending_pairs[:] = [p for p in pending_pairs if p["targetId"] != vid]
+            code, err = add_pending(v["name"], target_id=vid)
+            if err:
+                self._json(409, {"error": err, "limit": MAX_SUB_VENDOS, "board": BOARD})
+                return
+            v.update(key=None, lastN=None)   # the old key stops working right away
+            log_event("vendo_repair", v["name"])
+            self._json(200, {"code": code, "expiresInSec": zx.PAIR_CODE_TTL_MS // 1000})
         elif path == "/dev/clock":
             # Dev-only test clock - see mock_now().
             CLOCK["offset"] += float((self._read_json_body() or {}).get("advance", 0))

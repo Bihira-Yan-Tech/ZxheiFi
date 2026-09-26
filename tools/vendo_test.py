@@ -108,9 +108,81 @@ def test_unknown_vendo_on_coin_start():
     check("coin/start unknown vendo -> 404", st == 404 and d.get("error") == "vendo_unknown", f"{st} {d}")
 
 
+# ---------------------------------------------------------------- Task 4
+
+def test_default_vendo_list():
+    st, d = admin_get("/api/admin/vendos")
+    check("list -> 200", st == 200, f"{st} {d}")
+    check("board esp8266, limit 3", d.get("board") == "esp8266" and d.get("limit") == 3, d)
+    check("only Main", [v["id"] for v in d.get("vendos", [])] == [0], d)
+    main = vendo(d, 0) or {}
+    check("Main online + paired", main.get("online") is True and main.get("paired") is True, main)
+    check("Main starts empty", main.get("boxTotal") == 0 and main.get("commissionPct") == 0, main)
+    st, _ = request("GET", "/api/admin/vendos")
+    check("list needs login -> 401", st == 401, st)
+
+
+def test_add_vendo_codes():
+    st, d = admin_post("/api/admin/vendos/add", {"name": "Tindahan"}, STAFF)
+    check("staff cannot add -> 403", st == 403, f"{st} {d}")
+    code, st, d = add_code("Tindahan")
+    check("super add -> 200", st == 200, f"{st} {d}")
+    check("pairing code format", bool(CODE_RE.match(code)), code)
+    check("code valid 15 min", d.get("expiresInSec") == 900, d)
+    pend = list_vendos().get("pending", [])
+    check("super sees the pending code", len(pend) == 1 and pend[0]["code"] == code and pend[0]["name"] == "Tindahan", pend)
+    check("staff does not see codes", list_vendos(STAFF).get("pending") == [], list_vendos(STAFF))
+    add_code("Kanto")
+    _, st, d = add_code("Third")
+    check("3rd pending -> 409 too_many_pending", st == 409 and d.get("error") == "too_many_pending", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/add", {"name": "   "})
+    check("blank name -> 400 bad_name", st == 400 and d.get("error") == "bad_name", f"{st} {d}")
+    advance(901)
+    check("codes expire after 15 min", list_vendos().get("pending") == [], list_vendos())
+
+
+def test_update_main():
+    st, d = admin_post("/api/admin/vendos/update", {"id": 0, "name": "Front Desk", "commissionPct": 10})
+    check("update Main -> 200", st == 200, f"{st} {d}")
+    main = vendo(list_vendos(), 0)
+    check("Main renamed + commission", main["name"] == "Front Desk" and main["commissionPct"] == 10, main)
+    st, d = admin_post("/api/admin/vendos/update", {"id": 0, "commissionPct": 101})
+    check("commission 101 -> 400", st == 400 and d.get("error") == "bad_commission", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/update", {"id": 0, "name": ""})
+    check("empty name -> 400", st == 400 and d.get("error") == "bad_name", f"{st} {d}")
+    check("failed update changed nothing", vendo(list_vendos(), 0)["commissionPct"] == 10)
+    st, d = admin_post("/api/admin/vendos/update", {"id": 0, "commissionPct": 5}, STAFF)
+    check("staff cannot update -> 403", st == 403, st)
+    st, d = admin_post("/api/admin/vendos/update", {"id": 7, "name": "X"})
+    check("update unknown vendo -> 404", st == 404 and d.get("error") == "vendo_unknown", f"{st} {d}")
+
+
+def test_collect_main_box():
+    request("POST", "/dev/coin", {"peso": 10})  # no one reserved - orphan, but the cash is in the box
+    check("box counts the coin", vendo(list_vendos(), 0)["boxTotal"] == 10, list_vendos())
+    st, d = admin_post("/api/admin/vendos/collected", {"id": 0}, STAFF)
+    check("staff can mark Collected -> 200", st == 200 and d.get("collected") == 10, f"{st} {d}")
+    check("box back to 0", vendo(list_vendos(), 0)["boxTotal"] == 0)
+    st, rows = admin_get("/api/admin/vendos/collections", STAFF)
+    check("collection recorded", st == 200 and rows and rows[0]["amount"] == 10 and rows[0]["admin"] == "cashier1"
+          and rows[0]["vendoId"] == 0, f"{st} {rows}")
+
+
+def test_cannot_remove_main():
+    st, d = admin_post("/api/admin/vendos/remove", {"id": 0})
+    check("remove Main -> 400", st == 400 and d.get("error") == "cannot_remove_main", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/repair", {"id": 0})
+    check("re-pair Main -> 400", st == 400 and d.get("error") == "cannot_repair_main", f"{st} {d}")
+
+
 TESTS = [
     test_clock_releases_unpaid_reservation,
     test_unknown_vendo_on_coin_start,
+    test_default_vendo_list,
+    test_add_vendo_codes,
+    test_update_main,
+    test_collect_main_box,
+    test_cannot_remove_main,
 ]
 
 
