@@ -80,6 +80,7 @@ blocked_macs = []  # mirrors AdminAPI::blockedMacs - display/record only, no rea
 admin_stats = {
     "usersToday": 0, "coinRevenueToday": 0.0, "voucherRevenueToday": 0.0,
     "subscriptionRevenueToday": 0.0, "dataUsedTodayBytes": 0,
+    "coinByVendo": {},  # vendo id -> coin pesos today (mirrors AdminAPI::coinByVendoToday)
 }
 settings = {
     "nightPromoEnabled": True, "idleTimeoutMin": 5, "autoRebootTime": "03:00",
@@ -97,95 +98,154 @@ settings = {
 }
 
 
-# Coin session - mirrors firmware/coin_slot.h. Real coins come from the
-# acceptor's pulses; here POST /dev/coin {"peso": 10} drops one.
+# Coin sessions - mirrors firmware/coin_slot.h: one reservation slot per
+# vendo (0 = the main unit's own acceptor, 1..N = paired sub vendos). Real
+# coins come from the acceptor's pulses; here POST /dev/coin
+# {"peso": 10, "vendo": 0} drops one on the main unit's slot.
 COIN_IDLE_TIMEOUT_SEC = 45
 COIN_NO_COIN_TIMEOUT_SEC = 60
 COIN_ORPHAN_WINDOW_SEC = 60
 COIN_RESULT_KEEP_SEC = 600
-coin = {"reserved": False, "token": "", "mac": "", "extend": "", "last": 0.0,
-        "pesos": 0, "unmatched": 0, "seconds": 0, "bytes": 0, "unlimited": False,
-        "tier": "1", "topPeso": 0, "pauseWindow": 0,
-        "orphan": 0, "orphanAt": 0.0, "doneToken": "", "doneCode": "", "doneExtended": False, "doneAt": 0.0}
 CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
-
-def coin_clear_credit():
-    coin.update(pesos=0, unmatched=0, seconds=0, bytes=0, unlimited=False, tier="1", topPeso=0, pauseWindow=0)
-
-
-def coin_release():
-    coin.update(reserved=False, token="")
-    coin_clear_credit()
+# Test clock: every coin/vendo timer reads mock_now(), which POST /dev/clock
+# {"advance": seconds} pushes forward - timeout rules stay testable
+# without waiting. (Session countdowns keep using the real clock.)
+CLOCK = {"offset": 0.0}
 
 
-def coin_limit():
-    return COIN_IDLE_TIMEOUT_SEC if coin["seconds"] else COIN_NO_COIN_TIMEOUT_SEC
+def mock_now():
+    return time.time() + CLOCK["offset"]
 
 
-def coin_add(peso):
-    if not coin["reserved"]:
-        coin["orphan"] += peso
-        coin["orphanAt"] = time.time()
-        log_event("coin_orphan", f"PHP {peso} inserted with no customer on Insert Coin")
-        return
-    coin["last"] = time.time()
+def new_slot():
+    return {"reserved": False, "token": "", "mac": "", "extend": "", "last": 0.0, "rid": 0,
+            "pesos": 0, "unmatched": 0, "seconds": 0, "bytes": 0, "unlimited": False,
+            "tier": "1", "topPeso": 0, "pauseWindow": 0,
+            "orphan": 0, "orphanAt": 0.0,
+            "doneToken": "", "doneCode": "", "doneExtended": False, "doneAt": 0.0, "doneRid": 0}
+
+
+slots = {0: new_slot()}
+RID = {"next": random.randint(1, 1 << 20)}  # reservation ids, unique across slots and reboots
+
+
+def coin_clear_credit(s):
+    s.update(pesos=0, unmatched=0, seconds=0, bytes=0, unlimited=False, tier="1", topPeso=0, pauseWindow=0)
+
+
+def coin_release(s):
+    s.update(reserved=False, token="", rid=0)
+    coin_clear_credit(s)
+
+
+def coin_limit(s):
+    return COIN_IDLE_TIMEOUT_SEC if s["seconds"] else COIN_NO_COIN_TIMEOUT_SEC
+
+
+def coin_credit(s, peso):
+    """Adds one coin's Rate Profile to a reservation; False if no profile matches."""
     p = profile_by_peso(peso)
     if not p:
-        coin["unmatched"] += peso
+        s["unmatched"] += peso
         log_event("coin_unmatched", f"PHP {peso} has no matching Rate Profile")
-        return
-    coin["pesos"] += peso
-    coin["seconds"] += p["minutes"] * 60
+        return False
+    s["pesos"] += peso
+    s["seconds"] += p["minutes"] * 60
     if p["dataMb"] == 0:
-        coin["unlimited"] = True
+        s["unlimited"] = True
     else:
-        coin["bytes"] += p["dataMb"] * 1024 * 1024
-    if p["pesoAmount"] >= coin["topPeso"]:
-        coin["topPeso"], coin["tier"] = p["pesoAmount"], p["speedProfile"]
-    coin["pauseWindow"] = max(coin["pauseWindow"], p.get("validityMinutes") or MAX_PAUSE_MINUTES)
+        s["bytes"] += p["dataMb"] * 1024 * 1024
+    if p["pesoAmount"] >= s["topPeso"]:
+        s["topPeso"], s["tier"] = p["pesoAmount"], p["speedProfile"]
+    s["pauseWindow"] = max(s["pauseWindow"], p.get("validityMinutes") or MAX_PAUSE_MINUTES)
+    return True
 
 
-def coin_finish():
-    data = UNLIMITED_BYTES if coin["unlimited"] else coin["bytes"]
-    existing = sessions.get(coin["extend"]) if coin["extend"] else None
+def add_coin_revenue(vid, peso):
+    admin_stats["coinRevenueToday"] += peso
+    by = admin_stats["coinByVendo"]
+    by[vid] = by.get(vid, 0) + peso
+
+
+def coin_orphan(vid, peso):
+    s = slots[vid]
+    s["orphan"] += peso
+    s["orphanAt"] = mock_now()
+    log_event("coin_orphan", f"PHP {peso} inserted with no customer on Insert Coin" + (f" (vendo {vid})" if vid else ""))
+
+
+def coin_add(vid, peso):
+    s = slots[vid]
+    if not s["reserved"]:
+        coin_orphan(vid, peso)
+        return
+    s["last"] = mock_now()
+    coin_credit(s, peso)
+
+
+def coin_finish(vid):
+    s = slots[vid]
+    data = UNLIMITED_BYTES if s["unlimited"] else s["bytes"]
+    existing = sessions.get(s["extend"]) if s["extend"] else None
     extended = bool(existing and not existing.get("isSubscriber") and existing["mode"] == "hotspot")
     if extended:
-        existing["remainingSeconds"] += coin["seconds"]
+        existing["remainingSeconds"] += s["seconds"]
         if existing["remainingBytes"] < UNLIMITED_BYTES:
             existing["remainingBytes"] = UNLIMITED_BYTES if data == UNLIMITED_BYTES else existing["remainingBytes"] + data
-        code = coin["extend"]  # a paused session stays paused - Resume picks up the new totals
+        code = s["extend"]  # a paused session stays paused - Resume picks up the new totals
     else:
         code = "ZX" + "".join(random.choice(CODE_ALPHABET) for _ in range(6))
         sessions[code] = {
-            "mode": "hotspot", "tier": coin["tier"], "remainingSeconds": coin["seconds"],
+            "mode": "hotspot", "tier": s["tier"], "remainingSeconds": s["seconds"],
             "remainingBytes": data, "lastTick": time.time(), "paused": False, "isSubscriber": False,
-            "pauseWindowMinutes": coin["pauseWindow"],
+            "pauseWindowMinutes": s["pauseWindow"],
         }
         admin_stats["usersToday"] += 1
-    admin_stats["coinRevenueToday"] += coin["pesos"]
+    add_coin_revenue(vid, s["pesos"])
     log_event("coin_extend" if extended else "coin",
-              f"{code} PHP {coin['pesos']} = {coin['seconds'] // 60} min ({coin['mac']})")
-    coin.update(doneToken=coin["token"], doneCode=code, doneExtended=extended, doneAt=time.time())
-    coin_release()
+              f"{code} PHP {s['pesos']} = {s['seconds'] // 60} min ({s['mac']})")
+    s.update(doneToken=s["token"], doneCode=code, doneExtended=extended, doneAt=mock_now(), doneRid=s["rid"])
+    coin_release(s)
     return code, extended
 
 
+def coin_unclaimed(vid, peso):
+    # The cash is in the box, so it counts as a sale - and the log says who
+    # to refund if a customer turns up. Never silently dropped.
+    add_coin_revenue(vid, peso)
+    log_event("coin_late_unclaimed",
+              f"PHP {peso} at vendo {vid} was never claimed - counted in sales; refund the customer if they ask")
+
+
 def coin_tick():
-    if not coin["reserved"]:
-        return
-    idle = time.time() - coin["last"]
-    if not coin["seconds"]:
-        if idle > COIN_NO_COIN_TIMEOUT_SEC:
-            coin_release()
-    elif idle > COIN_IDLE_TIMEOUT_SEC:
-        coin_finish()
+    t = mock_now()
+    for vid, s in list(slots.items()):
+        if s["orphan"] and t - s["orphanAt"] >= COIN_ORPHAN_WINDOW_SEC:
+            peso, s["orphan"] = s["orphan"], 0
+            coin_unclaimed(vid, peso)
+        if not s["reserved"]:
+            continue
+        idle = t - s["last"]
+        if not s["seconds"]:
+            if idle > COIN_NO_COIN_TIMEOUT_SEC:
+                coin_release(s)
+        elif idle > COIN_IDLE_TIMEOUT_SEC:
+            coin_finish(vid)
 
 
 def coin_done_result(token):
-    if coin["doneToken"] and token == coin["doneToken"] and time.time() - coin["doneAt"] < COIN_RESULT_KEEP_SEC:
-        return coin["doneCode"], coin["doneExtended"]
+    for s in slots.values():
+        if token and s["doneToken"] == token and mock_now() - s["doneAt"] < COIN_RESULT_KEEP_SEC:
+            return s["doneCode"], s["doneExtended"]
     return None
+
+
+def slot_for_token(token):
+    for vid, s in slots.items():
+        if token and s["reserved"] and s["token"] == token:
+            return vid, s
+    return None, None
 
 
 def log_event(event_type, detail):
@@ -335,12 +395,13 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif path == "/api/coin/status":
             token = (qs.get("token") or [""])[0]
-            if coin["reserved"] and token == coin["token"]:
-                idle = time.time() - coin["last"]
+            vid, s = slot_for_token(token)
+            if s:
+                idle = mock_now() - s["last"]
                 self._json(200, {
-                    "state": "inserting", "pesos": coin["pesos"], "minutes": coin["seconds"] // 60,
-                    "dataMb": 0 if coin["unlimited"] else coin["bytes"] // (1024 * 1024),
-                    "unmatchedPesos": coin["unmatched"], "secondsLeft": max(0, int(coin_limit() - idle)),
+                    "state": "inserting", "vendo": vid, "pesos": s["pesos"], "minutes": s["seconds"] // 60,
+                    "dataMb": 0 if s["unlimited"] else s["bytes"] // (1024 * 1024),
+                    "unmatchedPesos": s["unmatched"], "secondsLeft": max(0, int(coin_limit(s) - idle)),
                 })
             elif coin_done_result(token):
                 code, extended = coin_done_result(token)
@@ -689,50 +750,68 @@ class Handler(BaseHTTPRequestHandler):
             if mac and any(m.lower() == mac.lower() for m in blocked_macs):
                 self._json(403, {"error": "device_blocked"})
                 return
+            vid = body.get("vendo", 0)
+            if not isinstance(vid, int) or isinstance(vid, bool) or vid not in slots:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            s = slots[vid]
             token = body.get("token", "")
-            if coin["reserved"] and token and token == coin["token"]:
-                coin["last"] = time.time()
-                self._json(200, {"token": token, "timeoutSec": COIN_NO_COIN_TIMEOUT_SEC})
+            if s["reserved"] and token and token == s["token"]:
+                s["last"] = mock_now()
+                self._json(200, {"token": token, "timeoutSec": COIN_NO_COIN_TIMEOUT_SEC, "vendo": vid})
                 return
-            if coin["reserved"]:
-                idle = time.time() - coin["last"]
-                self._json(409, {"error": "coin_slot_busy", "waitSec": max(1, int(coin_limit() - idle) + 1)})
+            if s["reserved"]:
+                idle = mock_now() - s["last"]
+                self._json(409, {"error": "coin_slot_busy", "waitSec": max(1, int(coin_limit(s) - idle) + 1)})
                 return
-            coin_clear_credit()
-            coin.update(reserved=True, token="".join(random.choice(CODE_ALPHABET) for _ in range(12)),
-                        mac=mac, extend=body.get("session", ""), last=time.time())
-            if coin["orphan"] and time.time() - coin["orphanAt"] < COIN_ORPHAN_WINDOW_SEC:
-                peso, coin["orphan"] = coin["orphan"], 0
-                coin_add(peso)
+            coin_clear_credit(s)
+            RID["next"] += 1
+            s.update(reserved=True, token="".join(random.choice(CODE_ALPHABET) for _ in range(12)),
+                     mac=mac, extend=body.get("session", ""), last=mock_now(), rid=RID["next"])
+            if s["orphan"]:  # coin_tick() already expired stale ones
+                peso, s["orphan"] = s["orphan"], 0
+                coin_credit(s, peso)
                 log_event("coin_orphan_claimed", f"PHP {peso} by {mac}")
-            coin["orphan"] = 0
-            self._json(200, {"token": coin["token"], "timeoutSec": COIN_NO_COIN_TIMEOUT_SEC})
+            self._json(200, {"token": s["token"], "timeoutSec": COIN_NO_COIN_TIMEOUT_SEC, "vendo": vid})
         elif path == "/api/coin/done":
             token = (self._read_json_body() or {}).get("token", "")
+            vid, s = slot_for_token(token)
             if coin_done_result(token):
                 code, extended = coin_done_result(token)
-            elif not coin["reserved"] or token != coin["token"]:
+            elif not s:
                 self._json(400, {"error": "no_coin_session"})
                 return
-            elif not coin["seconds"]:
-                coin_release()
+            elif not s["seconds"]:
+                coin_release(s)
                 self._json(400, {"error": "no_coins_inserted"})
                 return
             else:
-                code, extended = coin_finish()
-            s = sessions.get(code, {})
+                code, extended = coin_finish(vid)
+            sess = sessions.get(code, {})
             self._json(200, {"sessionId": code, "mode": "hotspot", "extended": extended,
-                             "timeRemainingSec": int(s.get("remainingSeconds", 0)),
-                             "dataRemainingBytes": s.get("remainingBytes", 0)})
+                             "timeRemainingSec": int(sess.get("remainingSeconds", 0)),
+                             "dataRemainingBytes": sess.get("remainingBytes", 0)})
         elif path == "/api/coin/cancel":
             token = (self._read_json_body() or {}).get("token", "")
-            if coin["reserved"] and token == coin["token"] and not coin["seconds"]:
-                coin_release()
+            vid, s = slot_for_token(token)
+            if s and not s["seconds"]:
+                coin_release(s)
             self._json(200, {"ok": True})
         elif path == "/dev/coin":
-            # Dev-only: simulates one coin drop of {"peso": N}. No firmware equivalent.
-            coin_add(int((self._read_json_body() or {}).get("peso", 0)))
+            # Dev-only: one coin drop of {"peso": N} on the main unit's own
+            # acceptor (vendo 0). No firmware equivalent.
+            body = self._read_json_body() or {}
+            vid = body.get("vendo", 0)
+            if vid not in slots:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            coin_add(vid, int(body.get("peso", 0)))
             self._json(200, {"ok": True})
+        elif path == "/dev/clock":
+            # Dev-only test clock - see mock_now().
+            CLOCK["offset"] += float((self._read_json_body() or {}).get("advance", 0))
+            coin_tick()
+            self._json(200, {"offset": CLOCK["offset"]})
         elif path == "/api/disconnect":
             body = self._read_json_body()
             sid = body.get("session", "")
