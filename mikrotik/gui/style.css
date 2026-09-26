@@ -455,3 +455,13 @@ textarea#announcement { width: 100%; resize: vertical; font: inherit; padding: 1
 .save-status.ok { background: rgba(34,197,94,0.15); border: 1px solid #22c55e; }
 .save-status.warn { background: rgba(234,179,8,0.15); border: 1px solid #eab308; }
 .save-status.error { background: rgba(239,68,68,0.15); border: 1px solid #ef4444; }
+
+/* ---- v2: coin box picker + Vendos tab ---- */
+.vendo-picker { margin-bottom: 12px; text-align: left; }
+.vendo-picker label { display: block; font-size: 13px; color: #aaa; margin-bottom: 4px; }
+.vendo-picker select { width: 100%; }
+.btn-inline { width: auto; padding: 6px 12px; font-size: 13px; margin: 2px 0; }
+.vendo-actions { white-space: nowrap; }
+.pair-code-box { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: 8px; }
+.pair-code-box code { font-size: 18px; letter-spacing: 2px; color: var(--accent); }
+.vendo-edit { margin-top: 16px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; }

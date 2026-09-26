@@ -3,9 +3,9 @@
 // Bump ZX_GUI_VERSION with every GUI change (and the same value in each
 // .html page's stale-script check). REQUIRED_FIRMWARE = the firmware
 // build these pages need (firmware/config.h FIRMWARE_VERSION).
-const ZX_GUI_VERSION = '1.0.0';
+const ZX_GUI_VERSION = '2.0.0-dev';
 window.ZX_GUI_VERSION = ZX_GUI_VERSION;
-const REQUIRED_FIRMWARE = '1.0.0';
+const REQUIRED_FIRMWARE = '2.0.0-dev';
 // Talks to the NodeMCU's JSON API (see firmware/gui_handler.h).
 
 // In production this GUI is served BY the MikroTik router (see
@@ -168,6 +168,50 @@ function ensureCoinModal() {
 
 function onStatusPage() { return !document.getElementById('hotspotForm'); }
 
+// Anything shown back as HTML that came from a setting or a user.
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---- Coin box picker (v2: sub vendos) ----------------------------------
+// Shown only when the shop has more than one coin box. The QR sticker on
+// each box opens the portal with ?vendo=<id>; the choice is remembered on
+// this phone, and offline boxes can't be picked.
+function selectedVendo() {
+  const sel = document.getElementById('vendoSelect');
+  const box = document.getElementById('vendoPicker');
+  if (!sel || !box || box.style.display === 'none' || !sel.value) return 0;
+  return parseInt(sel.value, 10) || 0;
+}
+
+function initVendoPicker(vendos) {
+  const box = document.getElementById('vendoPicker');
+  const sel = document.getElementById('vendoSelect');
+  if (!box || !sel) return;
+  const list = Array.isArray(vendos) ? vendos : [];
+  if (list.length < 2) {
+    box.style.display = 'none';
+    return;
+  }
+  const fromUrl = new URLSearchParams(location.search).get('vendo');
+  let stored = null;
+  try {
+    if (fromUrl !== null) localStorage.setItem('zxheifi_vendo', fromUrl);
+    stored = localStorage.getItem('zxheifi_vendo');
+  } catch (e) { /* storage blocked - URL/first box still work */ }
+  const want = fromUrl !== null ? fromUrl : stored;
+  sel.innerHTML = list.map(v =>
+    `<option value="${v.id}"${v.online ? '' : ' disabled'}>${escHtml(v.name)}${v.online ? '' : ' (offline)'}</option>`
+  ).join('');
+  const pick = list.find(v => String(v.id) === String(want) && v.online) || list.find(v => v.online) || list[0];
+  sel.value = String(pick.id);
+  box.style.display = '';
+}
+
+function onVendoChange() {
+  try { localStorage.setItem('zxheifi_vendo', String(selectedVendo())); } catch (e) { /* storage blocked */ }
+}
+
 async function onCoinInsertTap() {
   SoundManager.startMusicIfNeeded(); // a real tap - browser will actually allow audio to start now
   SoundManager.play('click');
@@ -178,11 +222,25 @@ async function onCoinInsertTap() {
     const res = await fetch(apiBase() + '/api/coin/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mac: deviceInfo().mac, session, token: localStorage.getItem('zxheifi_coin_token') || '' }),
+      body: JSON.stringify({ mac: deviceInfo().mac, session, vendo: selectedVendo(),
+                             token: localStorage.getItem('zxheifi_coin_token') || '' }),
     });
     const data = await res.json();
     if (res.status === 409 && data.error === 'coin_slot_busy') {
-      alert(`Someone else is using the coin slot right now. Please try again in ${data.waitSec} seconds.`);
+      alert(`Someone else is using this coin box right now. Please try again in ${data.waitSec} seconds.`);
+      return;
+    }
+    if (res.status === 409 && data.error === 'vendo_offline') {
+      SoundManager.play('error');
+      alert('That coin box is offline right now - please choose another one.');
+      applyBranding();
+      return;
+    }
+    if (res.status === 404 && data.error === 'vendo_unknown') {
+      SoundManager.play('error');
+      alert('That coin box no longer exists - please choose another one.');
+      try { localStorage.removeItem('zxheifi_vendo'); } catch (e) { /* storage blocked */ }
+      applyBranding();
       return;
     }
     if (!res.ok) throw new Error(data.error || 'coin_start_failed');
@@ -343,6 +401,7 @@ async function applyBranding() {
     }
     showAnnouncement(data.announcement);
     showRates(data.rates);
+    initVendoPicker(data.vendos);
     // Master switch: an operator with no sound files (or who just
     // doesn't want audio) never sees the feature at all - only shown
     // once Settings > Enable Sounds is on.
@@ -918,6 +977,7 @@ function openTab(event, tabName) {
   if (tabName === 'users') loadActiveUsers();
   if (tabName === 'subscriptions') loadSpeedLabels();
   if (tabName === 'sales') loadSales();
+  if (tabName === 'vendos') { loadVendos(); loadCollections(); }
   if (tabName === 'logs') loadLogs();
   if (tabName === 'admins') loadAdminAccounts();
   if (tabName === 'settings') loadSettingsIntoForm();
@@ -1169,6 +1229,7 @@ async function loadSales() {
     const now = new Date();
     const weekStart = ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6));
     const monthStart = ymd(new Date(now.getFullYear(), now.getMonth(), 1));
+    await loadSalesVendos();
     document.getElementById('salesToday').textContent = '₱' + dayTotal(today).toFixed(2);
     document.getElementById('salesWeek').textContent = '₱' + sumSales(salesDays.filter(d => d.dateStamp >= weekStart)).toFixed(2);
     document.getElementById('salesMonth').textContent = '₱' + sumSales(salesDays.filter(d => d.dateStamp >= monthStart)).toFixed(2);
@@ -1213,9 +1274,97 @@ function filteredSales() {
   return salesDays.filter(d => d.dateStamp >= from && d.dateStamp <= to);
 }
 
+// ---- Sales per vendo (v2) ------------------------------------------------
+let salesVendos = [];   // [{id, name, commissionPct}] for the vendo filter
+
+async function loadSalesVendos() {
+  const sel = document.getElementById('salesVendo');
+  if (!sel) return;
+  try {
+    const res = await adminFetch('/api/admin/vendos');
+    if (!res.ok) return;
+    const data = await res.json();
+    salesVendos = data.vendos.map(v => ({ id: v.id, name: v.name, commissionPct: v.commissionPct }));
+  } catch (err) {
+    salesVendos = [{ id: 0, name: 'Main', commissionPct: 0 }];
+  }
+  const keep = sel.value;
+  sel.innerHTML = '<option value="all">All coin boxes</option>' +
+    salesVendos.map(v => `<option value="${v.id}">${escHtml(v.name)}</option>`).join('');
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : 'all';
+  document.getElementById('salesVendoWrap').style.display = salesVendos.length > 1 ? '' : 'none';
+  document.getElementById('salesVendoCsvBtn').style.display = salesVendos.length > 1 ? '' : 'none';
+}
+
+// Coin pesos a vendo took on a day. Days saved before v2 have no split:
+// all their coins were the main unit's.
+function vendoPeso(day, id) {
+  if (!Array.isArray(day.byVendo) || !day.byVendo.length) return id === 0 ? day.coinRevenue : 0;
+  const e = day.byVendo.find(x => x.id === id);
+  return e ? e.peso : 0;
+}
+
+function commissionSplit(amount, pct) {
+  const host = Math.round(amount * pct) / 100;
+  return { host, owner: amount - host };
+}
+
+function selectedSalesVendo() {
+  const sel = document.getElementById('salesVendo');
+  return !sel || sel.value === 'all' ? null : parseInt(sel.value, 10);
+}
+
+function renderSalesByVendo(vid) {
+  const v = salesVendos.find(x => x.id === vid) || { name: 'Vendo ' + vid, commissionPct: 0 };
+  const rows = filteredSales();
+  const tbody = document.querySelector('#salesVendoTable tbody');
+  let total = 0, hostTotal = 0;
+  tbody.innerHTML = rows.length ? rows.map(d => {
+    const peso = vendoPeso(d, vid);
+    const split = commissionSplit(peso, v.commissionPct);
+    total += peso;
+    hostTotal += split.host;
+    return `<tr><td>${d.dateStamp}</td><td>₱${peso.toFixed(2)}</td><td>${v.commissionPct}%</td>
+      <td>₱${split.host.toFixed(2)}</td><td><b>₱${split.owner.toFixed(2)}</b></td></tr>`;
+  }).join('') : '<tr><td colspan="5" style="color:#aaa;">No sales in this period.</td></tr>';
+  const [from, to] = salesRangeBounds();
+  const period = from === to ? from : (from === '0000-00-00' ? 'all saved days' : `${from} to ${to}`);
+  document.getElementById('salesSummary').textContent =
+    `${v.name}, ${period}: ₱${total.toFixed(2)} in coins` +
+    (v.commissionPct ? ` - host share ₱${hostTotal.toFixed(2)}, yours ₱${(total - hostTotal).toFixed(2)}.` : '.');
+}
+
+// One row per date x coin box - for sharing income with location hosts.
+function exportVendoSalesCsv() {
+  const rows = filteredSales().slice().reverse();
+  const [from, to] = salesRangeBounds();
+  const lines = ['date,vendo,coins,commission_pct,host_share,owner_share'];
+  rows.forEach(d => salesVendos.forEach(v => {
+    const peso = vendoPeso(d, v.id);
+    if (!peso) return;
+    const split = commissionSplit(peso, v.commissionPct);
+    const name = '"' + String(v.name).replace(/"/g, '""') + '"';
+    lines.push([d.dateStamp, name, peso.toFixed(2), v.commissionPct, split.host.toFixed(2), split.owner.toFixed(2)].join(','));
+  }));
+  const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = from === '0000-00-00' ? 'sales-per-vendo-all.csv' :
+    (from === to ? `sales-per-vendo-${from}.csv` : `sales-per-vendo-${from}_to_${to}.csv`);
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function renderSales() {
   const tbody = document.querySelector('#salesTable tbody');
   if (!tbody) return;
+  const vid = selectedSalesVendo();
+  document.getElementById('salesTable').style.display = vid === null ? '' : 'none';
+  document.getElementById('salesVendoTable').style.display = vid === null ? 'none' : '';
+  if (vid !== null) {
+    renderSalesByVendo(vid);
+    return;
+  }
   const rows = filteredSales();
   tbody.innerHTML = rows.length ? rows.map(d => `
       <tr>
@@ -1708,13 +1857,16 @@ let firmwareOutdated = false;
 // were stamped with dates ("2026.09.26.2") - those count as older.
 function versionAtLeast(have, want) {
   if (!have) return false;
-  const a = String(have).split('.').map(n => parseInt(n, 10) || 0);
-  const b = String(want).split('.').map(n => parseInt(n, 10) || 0);
+  const [haveCore, haveTag] = String(have).split('-');
+  const [wantCore, wantTag] = String(want).split('-');
+  const a = haveCore.split('.').map(n => parseInt(n, 10) || 0);
+  const b = wantCore.split('.').map(n => parseInt(n, 10) || 0);
   if (a[0] >= 2000) return false;
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
   }
-  return true;
+  // Same numbers: a pre-release ("2.0.0-dev") is older than the release.
+  return !(haveTag && !wantTag);
 }
 
 // Pages newer than the NodeMCU's firmware = features that silently don't
@@ -1823,3 +1975,192 @@ document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('timeRemaining')) initStatusPage();
   if (document.getElementById('totalUsers')) initAdminPage();
 });
+
+
+// ---- Vendos tab (v2: sub vendos) ----------------------------------------
+// Coin boxes: this unit ("Main") plus paired sub vendos. Staff can see
+// them and mark a box Collected; adding/editing/removing is super-only.
+let vendoCache = null;
+
+const VENDO_ERRORS = {
+  too_many_pending: 'Two pairing codes are already waiting. Use one first, or wait 15 minutes for them to expire.',
+  bad_name: 'The name must be 1-32 characters.',
+  invalid_pin: 'That pin cannot be used (allowed: D1, D2, D5, D6, D7).',
+  coin_and_relay_same_pin: 'The coin signal and the relay cannot use the same pin.',
+  bad_pulse_value: 'Pesos per pulse must be 1-100.',
+  bad_commission: 'Commission must be 0-100%.',
+  cannot_remove_main: 'The main unit cannot be removed.',
+  vendo_unknown: 'That coin box no longer exists - reload the tab.',
+};
+
+function vendoError(d) {
+  if (d && d.error === 'vendo_limit') {
+    return `Limit reached: this main unit (${d.board === 'esp8266' ? 'NodeMCU' : 'ESP32'}) supports up to ${d.limit} sub vendos.`;
+  }
+  return VENDO_ERRORS[d && d.error] || ('Error: ' + ((d && d.error) || 'unknown'));
+}
+
+function vendoStatus(v) {
+  if (v.id === 0 || v.online) return '🟢 online';
+  if (!v.paired) return '⚪ waiting for pairing';
+  return v.lastSeenSec < 0 ? '🔴 offline' : `🔴 offline ${Math.max(1, Math.round(v.lastSeenSec / 60))} min`;
+}
+
+async function loadVendos() {
+  const tbody = document.querySelector('#vendosTable tbody');
+  if (!tbody) return;
+  try {
+    const res = await adminFetch('/api/admin/vendos');
+    const data = await res.json();
+    if (!res.ok) return;
+    vendoCache = data;
+    const isSuper = currentAdminRole !== 'staff';
+    document.getElementById('vendoLimitNote').textContent = data.board === 'esp8266'
+      ? `NodeMCU main unit: up to ${data.limit} sub vendos. For more, or for upcoming features (Telegram bot, GCash), use an ESP32 as the main unit.`
+      : `ESP32 main unit: up to ${data.limit} sub vendos.`;
+    const subs = data.vendos.filter(v => v.id !== 0).length + data.pending.filter(p => !p.targetId).length;
+    const addBtn = document.getElementById('addVendoBtn');
+    addBtn.style.display = isSuper ? '' : 'none';
+    addBtn.disabled = subs >= data.limit;
+    addBtn.title = addBtn.disabled ? 'Limit reached for this board' : '';
+    tbody.innerHTML = data.vendos.map(v => {
+      const actions = [
+        `<button class="btn btn-secondary btn-inline" onclick="collectVendo(${v.id})">Collected</button>`,
+        `<button class="btn btn-secondary btn-inline" onclick="openVendoSticker(${v.id})">QR</button>`,
+      ];
+      if (isSuper) {
+        actions.push(`<button class="btn btn-secondary btn-inline" onclick="editVendo(${v.id})">Edit</button>`);
+        if (v.id !== 0) {
+          actions.push(`<button class="btn btn-secondary btn-inline" onclick="repairVendo(${v.id})">Re-pair</button>`);
+          actions.push(`<button class="btn btn-danger btn-inline" onclick="removeVendo(${v.id})">Remove</button>`);
+        }
+      }
+      return `<tr><td>${escHtml(v.name)}</td><td>${vendoStatus(v)}</td><td>₱${v.todayPeso}</td>
+        <td>₱${v.boxTotal}</td><td>${v.commissionPct}%</td><td class="vendo-actions">${actions.join(' ')}</td></tr>`;
+    }).join('');
+    document.getElementById('vendoPending').innerHTML = data.pending.map(p => `
+      <div class="pair-code-box">
+        <b>${escHtml(p.name)}</b>${p.targetId ? ' (re-pair)' : ''} - pairing code
+        <code>${escHtml(p.code)}</code> <span class="hint">expires in ${Math.ceil(p.expiresInSec / 60)} min</span>
+      </div>`).join('');
+  } catch (err) {
+    console.error('Vendos load failed', err);
+  }
+}
+
+async function postVendo(path, body) {
+  const res = await adminFetch(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(vendoError(data));
+    return null;
+  }
+  return data;
+}
+
+async function addVendo() {
+  const name = (prompt('Name of the new coin box (e.g. "Tindahan ni Aling Nena"):') || '').trim();
+  if (!name) return;
+  const data = await postVendo('/api/admin/vendos/add', { name });
+  if (!data) return;
+  alert(`Pairing code for "${name}":\n\n${data.code}\n\nValid for 15 minutes, one use.\n` +
+        '1. Flash the box with the Setup Companion (Device type: Sub Vendo).\n' +
+        '2. On a phone, join the WiFi "ZxheiFi-Sub-Setup".\n' +
+        '3. Enter the WiFi of this spot and this code, then Save.');
+  loadVendos();
+}
+
+async function collectVendo(id) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v) return;
+  if (!confirm(`Collected ₱${v.boxTotal} from "${v.name}"?\nThis records the collection and resets the box to ₱0.`)) return;
+  if (await postVendo('/api/admin/vendos/collected', { id })) {
+    loadVendos();
+    loadCollections();
+  }
+}
+
+function openVendoSticker(id) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v) return;
+  window.open(`vendo-sticker.html?vendo=${id}&name=${encodeURIComponent(v.name)}`, '_blank');
+}
+
+function editVendo(id) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v) return;
+  const panel = document.getElementById('vendoEdit');
+  panel.dataset.id = id;
+  document.getElementById('vendoEditTitle').textContent = 'Edit: ' + v.name;
+  document.getElementById('vendoEditName').value = v.name;
+  document.getElementById('vendoEditCommission').value = v.commissionPct;
+  document.getElementById('vendoEditPins').style.display = id === 0 ? 'none' : '';
+  document.getElementById('vendoEditMainNote').style.display = id === 0 ? '' : 'none';
+  if (id !== 0) {
+    document.getElementById('vendoEditCoinPin').value = v.coinPin;
+    document.getElementById('vendoEditRelayPin').value = v.relayPin;
+    document.getElementById('vendoEditRelayHigh').value = v.relayActiveHigh ? 'high' : 'low';
+    document.getElementById('vendoEditPulse').value = v.pesosPerPulse;
+  }
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeVendoEdit() {
+  document.getElementById('vendoEdit').style.display = 'none';
+}
+
+async function saveVendoEdit() {
+  const id = parseInt(document.getElementById('vendoEdit').dataset.id, 10);
+  const body = {
+    id,
+    name: document.getElementById('vendoEditName').value.trim(),
+    commissionPct: parseInt(document.getElementById('vendoEditCommission').value, 10),
+  };
+  if (Number.isNaN(body.commissionPct)) body.commissionPct = -1;   // server explains the range
+  if (id !== 0) {
+    body.coinPin = document.getElementById('vendoEditCoinPin').value;
+    body.relayPin = document.getElementById('vendoEditRelayPin').value;
+    body.relayActiveHigh = document.getElementById('vendoEditRelayHigh').value === 'high';
+    body.pesosPerPulse = parseInt(document.getElementById('vendoEditPulse').value, 10) || 0;
+  }
+  if (await postVendo('/api/admin/vendos/update', body)) {
+    closeVendoEdit();
+    loadVendos();
+  }
+}
+
+async function repairVendo(id) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v || !confirm(`Re-pair "${v.name}"?\nIts current pairing stops working right away; enter the new code in the box's Setup Wizard.`)) return;
+  const data = await postVendo('/api/admin/vendos/repair', { id });
+  if (data) {
+    alert(`New pairing code for "${v.name}":\n\n${data.code}\n\nValid for 15 minutes.`);
+    loadVendos();
+  }
+}
+
+async function removeVendo(id) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v || !confirm(`Remove "${v.name}"?\nIt stops working at once. Its sales history is kept.` +
+                     (v.boxTotal ? `\n\nIts coin box still shows ₱${v.boxTotal} - mark it Collected first.` : ''))) return;
+  if (await postVendo('/api/admin/vendos/remove', { id })) loadVendos();
+}
+
+async function loadCollections() {
+  const tbody = document.querySelector('#collectionsTable tbody');
+  if (!tbody) return;
+  try {
+    const res = await adminFetch('/api/admin/vendos/collections');
+    const rows = await res.json();
+    if (!res.ok) return;
+    tbody.innerHTML = rows.length ? rows.map(c => `
+      <tr><td>${c.at ? new Date(c.at * 1000).toLocaleString() : '(clock not set)'}</td>
+      <td>${escHtml(c.name)}</td><td>₱${c.amount}</td><td>${escHtml(c.admin)}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="color:#aaa;">No collections yet.</td></tr>';
+  } catch (err) {
+    console.error('Collections load failed', err);
+  }
+}

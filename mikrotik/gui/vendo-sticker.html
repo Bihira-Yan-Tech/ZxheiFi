@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coin Box Sticker - Print</title>
+    <!--
+      Printable QR sticker for one coin box, opened from Admin > Vendos > QR
+      (vendo-sticker.html?vendo=<id>&name=<name>). The QR opens this
+      portal's login page with that box already picked, so a customer
+      standing at a sub vendo pays into the right box.
+    -->
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #eef0f3; color: #111; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 16px;
+                   background: #0f172a; color: #fff; }
+        .toolbar h1 { font-size: 16px; margin: 0 auto 0 0; }
+        .toolbar button { font-size: 15px; padding: 10px 18px; border: 0; border-radius: 8px; cursor: pointer;
+                          background: #2dd4c9; color: #062b28; font-weight: bold; }
+        .toolbar .tip { width: 100%; font-size: 12px; opacity: .8; }
+        .sheet { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; padding: 20px 16px; }
+        .sticker { width: 260px; background: #fff; border: 2px dashed #555; border-radius: 14px; padding: 16px;
+                   text-align: center; break-inside: avoid; page-break-inside: avoid; }
+        .brand { font-size: 12px; font-weight: bold; letter-spacing: 1px; color: #555; text-transform: uppercase; }
+        .name { font-size: 22px; font-weight: bold; margin: 4px 0 10px; word-break: break-word; }
+        .qr { display: flex; justify-content: center; margin: 6px 0 10px; }
+        .qr img, .qr canvas { width: 180px !important; height: 180px !important; }
+        ol { text-align: left; font-size: 14px; line-height: 1.5; margin: 0; padding-left: 22px; }
+        .url { font-family: "Courier New", monospace; font-size: 11px; color: #444; margin-top: 8px; word-break: break-all; }
+        .empty { padding: 40px; text-align: center; }
+        @media print {
+            body { background: #fff; }
+            .toolbar { display: none; }
+            .sheet { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <h1 id="title">Coin box sticker</h1>
+        <label>Copies <select id="copies" onchange="render()"><option>1</option><option>2</option><option selected>4</option><option>6</option></select></label>
+        <button onclick="window.print()">🖨 Print / Save as PDF</button>
+        <div class="tip">Stick one on the coin box. The QR opens the WiFi login page with this box already chosen.</div>
+    </div>
+    <div class="sheet" id="sheet"></div>
+
+    <script src="qrcode.min.js"></script>
+    <script>
+        var params = new URLSearchParams(location.search);
+        var vendoId = parseInt(params.get('vendo'), 10);
+        var name = params.get('name') || '';
+
+        function esc(s) {
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        function render() {
+            var sheet = document.getElementById('sheet');
+            if (isNaN(vendoId) || vendoId < 0) {
+                sheet.innerHTML = '<div class="empty">Open this page from Admin &gt; Vendos &gt; QR.</div>';
+                return;
+            }
+            // The login page on the router this admin page came from.
+            var url = location.protocol + '//' + location.host + '/login?vendo=' + vendoId;
+            var copies = parseInt(document.getElementById('copies').value, 10) || 1;
+            var html = '';
+            for (var i = 0; i < copies; i++) {
+                html += '<div class="sticker"><div class="brand">WiFi - Insert Coin</div>' +
+                        '<div class="name">' + esc(name || ('Coin box ' + vendoId)) + '</div>' +
+                        '<div class="qr" id="qr' + i + '"></div>' +
+                        '<ol><li>Connect to the WiFi</li><li>Scan this QR</li><li>Tap <b>Insert Coin</b>, then drop your coins here</li></ol>' +
+                        '<div class="url">' + esc(url) + '</div></div>';
+            }
+            sheet.innerHTML = html;
+            for (var j = 0; j < copies; j++) {
+                new QRCode(document.getElementById('qr' + j), { text: url, width: 180, height: 180,
+                    colorDark: '#000000', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            }
+            document.getElementById('title').textContent = 'Coin box sticker - ' + (name || ('#' + vendoId));
+            document.title = 'Sticker - ' + (name || ('Coin box ' + vendoId));
+        }
+        render();
+    </script>
+</body>
+</html>

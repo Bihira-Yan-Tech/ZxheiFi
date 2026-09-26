@@ -43,6 +43,11 @@
                 </div>
             </div>
             
+            <div class="vendo-picker" id="vendoPicker" style="display:none;">
+                <label for="vendoSelect">Coin box</label>
+                <select id="vendoSelect" onchange="onVendoChange()"></select>
+            </div>
+
             <div class="controls">
                 <button class="btn btn-secondary" id="pauseBtn" onclick="togglePause()">Pause</button>
                 <button class="btn btn-primary" id="coinTopUpBtn" onclick="onCoinInsertTap()">🪙 Add Time (Coins)</button>
@@ -69,7 +74,7 @@
          cache (while this page is newer) had buttons that silently did nothing.
          Refetch both once, then reload; if still stale, say how to fix it. */
       (function () {
-        var want = '1.0.0';
+        var want = '2.0.0-dev';
         if (window.ZX_GUI_VERSION === want) return;
         var key = 'zx_gui_refetch';
         var tried = null;

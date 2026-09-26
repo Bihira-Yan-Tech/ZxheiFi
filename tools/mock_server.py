@@ -30,7 +30,7 @@ GUI_DIR = Path(__file__).resolve().parent.parent / "mikrotik" / "gui"
 UNLIMITED_SECONDS = 0xFFFFFFF0
 UNLIMITED_BYTES = 0xFFFFFFFFFFF00000
 MAX_PAUSE_MINUTES = 120
-FIRMWARE_VERSION = "1.0.0"  # mirrors firmware/config.h
+FIRMWARE_VERSION = "2.0.0-dev"  # mirrors firmware/config.h
 
 # Unified rate table - mirrors AdminAPI::rateProfiles. Every coin
 # denomination AND every voucher price point draws from this SAME list;
@@ -1368,7 +1368,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not_found"})
 
     def _serve_static(self, path):
-        if path == "/":
+        if path in ("/", "/login"):   # /login = MikroTik's hotspot login page (QR stickers link here)
             path = "/login.html"
         file_path = (GUI_DIR / path.lstrip("/")).resolve()
         if GUI_DIR not in file_path.parents or not file_path.is_file():

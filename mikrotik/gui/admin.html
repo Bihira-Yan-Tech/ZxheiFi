@@ -43,6 +43,7 @@
                     <button class="tab-btn" data-tab="users" onclick="openTab(event, 'users')">Active Users</button>
                     <button class="tab-btn" data-tab="subscriptions" onclick="openTab(event, 'subscriptions')">Subscriptions</button>
                     <button class="tab-btn" data-tab="sales" onclick="openTab(event, 'sales')">Sales</button>
+                    <button class="tab-btn" data-tab="vendos" onclick="openTab(event, 'vendos')">Vendos</button>
                     <button class="tab-btn" data-tab="logs" onclick="openTab(event, 'logs')">Logs</button>
                     <button class="tab-btn" data-tab="admins" onclick="openTab(event, 'admins')">Admins</button>
                     <button class="tab-btn" data-tab="settings" onclick="openTab(event, 'settings')">Settings</button>
@@ -196,7 +197,11 @@
                     <input type="date" id="salesFrom" style="display:none;" onchange="renderSales()">
                     <span id="salesToLabel" style="display:none;">to</span>
                     <input type="date" id="salesTo" style="display:none;" onchange="renderSales()">
+                    <span id="salesVendoWrap" style="display:none;">
+                        <select id="salesVendo" onchange="renderSales()"><option value="all">All coin boxes</option></select>
+                    </span>
                     <button class="btn btn-secondary" onclick="exportSalesCsv()">Export CSV</button>
+                    <button class="btn btn-secondary" id="salesVendoCsvBtn" style="display:none;" onclick="exportVendoSalesCsv()">Export per-vendo CSV</button>
                 </div>
                 <p class="hint" id="salesSummary"></p>
                 <div class="table-container" style="margin-top:12px;">
@@ -214,6 +219,97 @@
                         <tbody>
                             <!-- Daily rows will be populated here (last 90 days) -->
                         </tbody>
+                    </table>
+                    <table id="salesVendoTable" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Coins</th>
+                                <th>Commission</th>
+                                <th>Host share</th>
+                                <th>Your share</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="vendos" class="tab-content" style="display:none;">
+                <h2>Vendos (coin boxes)</h2>
+                <p class="hint" id="vendoLimitNote"></p>
+                <button class="btn btn-primary btn-inline" id="addVendoBtn" onclick="addVendo()">+ Add Vendo</button>
+                <div id="vendoPending"></div>
+                <div class="table-container" style="margin-top:12px;">
+                    <table id="vendosTable">
+                        <thead>
+                            <tr>
+                                <th>Vendo</th>
+                                <th>Status</th>
+                                <th>Today</th>
+                                <th>Coin box</th>
+                                <th>Commission</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <div class="vendo-edit" id="vendoEdit" style="display:none;">
+                    <h3 id="vendoEditTitle">Edit</h3>
+                    <div class="form-group">
+                        <label for="vendoEditName">Name</label>
+                        <input type="text" id="vendoEditName" maxlength="32">
+                    </div>
+                    <div class="form-group">
+                        <label for="vendoEditCommission">Commission for the location host (%)</label>
+                        <input type="number" id="vendoEditCommission" min="0" max="100" step="1">
+                    </div>
+                    <p class="hint" id="vendoEditMainNote">The main unit's own coin pins are in Settings &gt; Coin Slot.</p>
+                    <div id="vendoEditPins">
+                        <div class="form-group">
+                            <label for="vendoEditCoinPin">Coin signal pin</label>
+                            <select id="vendoEditCoinPin">
+                                <option>D1</option><option>D2</option><option>D5</option><option>D6</option><option>D7</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vendoEditRelayPin">Relay pin (acceptor power)</label>
+                            <select id="vendoEditRelayPin">
+                                <option>D1</option><option>D2</option><option>D5</option><option>D6</option><option>D7</option>
+                                <option value="none">none (acceptor always on)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vendoEditRelayHigh">Relay switches on when the pin is</label>
+                            <select id="vendoEditRelayHigh">
+                                <option value="high">HIGH</option>
+                                <option value="low">LOW</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vendoEditPulse">Pesos per pulse</label>
+                            <input type="number" id="vendoEditPulse" min="1" max="100" step="1">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-inline" onclick="saveVendoEdit()">Save</button>
+                    <button class="btn btn-secondary btn-inline" onclick="closeVendoEdit()">Cancel</button>
+                </div>
+
+                <h3 style="margin-top:24px;">Collections</h3>
+                <p class="hint">Every "Collected" press - who took the coins out of which box, and how much.</p>
+                <div class="table-container">
+                    <table id="collectionsTable">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Vendo</th>
+                                <th>Amount</th>
+                                <th>By</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
                     </table>
                 </div>
             </div>
@@ -458,7 +554,7 @@
          cache (while this page is newer) had buttons that silently did nothing.
          Refetch both once, then reload; if still stale, say how to fix it. */
       (function () {
-        var want = '1.0.0';
+        var want = '2.0.0-dev';
         if (window.ZX_GUI_VERSION === want) return;
         var key = 'zx_gui_refetch';
         var tried = null;
