@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZxheiFi - Status</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-mac="$(mac)" data-ip="$(ip)" data-username="$(username)" data-logged-in="$(logged-in)">
+    <div class="container">
+        <div class="glass-card">
+            <button type="button" class="sound-toggle" id="soundToggle" onclick="toggleSound()" title="Sound">🔇</button>
+            <div class="logo">
+                <img src="logo.png" alt="ZxheiFi">
+            </div>
+            <div class="announcement" id="announcement" style="display:none;"></div>
+            <h1 class="title">Connection Status</h1>
+            
+            <!-- Shown instead of bouncing to login.html when this browser can't
+                 identify the session (see script.js refreshSessionStatus). -->
+            <div class="status-notice" id="statusNotice" style="display:none;"></div>
+
+            <div class="status-card">
+                <div class="status-item">
+                    <span class="label">Mode:</span>
+                    <span class="value" id="connectionMode">Hotspot</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Time Remaining:</span>
+                    <span class="value" id="timeRemaining">--:--:--</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Data Remaining:</span>
+                    <span class="value" id="dataRemaining">--.-- GB</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Session ID:</span>
+                    <span class="value" id="sessionId">----</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Signal Strength:</span>
+                    <span class="value" id="signalStrength">--%</span>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <button class="btn btn-secondary" id="pauseBtn" onclick="togglePause()">Pause</button>
+                <button class="btn btn-primary" id="coinTopUpBtn" onclick="onCoinInsertTap()">🪙 Add Time (Coins)</button>
+                <button class="btn btn-warning" id="extendBtn" onclick="extendSession()">Extend with Voucher</button>
+                <button class="btn btn-danger" onclick="disconnect()">Disconnect</button>
+                <button class="btn btn-secondary" onclick="showQR()">Show QR</button>
+            </div>
+            
+            <div class="qr-modal" id="qrModal" style="display:none;">
+                <div class="qr-content">
+                    <span class="close-btn" onclick="hideQR()">&times;</span>
+                    <h2>Scan to Share Connection</h2>
+                    <div id="qrCode"></div>
+                    <p class="qr-text">Share this QR with others to give them your remaining time/data</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="qrcode.min.js"></script>
+    <script src="script.js"></script>
+    <script>
+      /* Stale-script guard: a phone that kept an older script.js/style.css in its
+         cache (while this page is newer) had buttons that silently did nothing.
+         Refetch both once, then reload; if still stale, say how to fix it. */
+      (function () {
+        var want = '1.0.0';
+        if (window.ZX_GUI_VERSION === want) return;
+        var key = 'zx_gui_refetch';
+        var tried = null;
+        try { tried = sessionStorage.getItem(key); sessionStorage.setItem(key, want); } catch (e) {}
+        if (tried === want) {
+          var d = document.createElement('div');
+          d.style.cssText = 'background:#b91c1c;color:#fff;padding:10px 14px;font:14px sans-serif;text-align:center';
+          d.textContent = 'Luma pa ang naka-save na files ng page na ito. I-refresh ang page (o i-clear ang browser cache).';
+          document.body.insertBefore(d, document.body.firstChild);
+          return;
+        }
+        Promise.all(['script.js', 'style.css'].map(function (f) {
+          return fetch(f, { cache: 'reload' }).catch(function () {});
+        })).then(function () { location.reload(); });
+      })();
+    </script>
+</body>
+</html>

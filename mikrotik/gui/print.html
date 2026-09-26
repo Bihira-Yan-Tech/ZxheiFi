@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vouchers - Print</title>
+    <!--
+      Printable voucher sheet, opened in a new tab by admin.html's Generate
+      Vouchers (script.js generateVouchers). The batch is handed over in
+      localStorage ("zxheifi_print_batch"), so this page needs no NodeMCU
+      call and can be reopened or printed again later. Print -> "Save as
+      PDF" in the browser's dialog keeps a PDF copy.
+    -->
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #eef0f3; color: #111; }
+        .toolbar { position: sticky; top: 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+                   padding: 12px 16px; background: #0f172a; color: #fff; }
+        .toolbar h1 { font-size: 16px; margin: 0 auto 0 0; }
+        .toolbar button { font-size: 15px; padding: 10px 18px; border: 0; border-radius: 8px; cursor: pointer;
+                          background: #2dd4c9; color: #062b28; font-weight: bold; }
+        .toolbar .tip { width: 100%; font-size: 12px; opacity: .8; }
+        .sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;
+                 padding: 16px; max-width: 1000px; margin: 0 auto; }
+        .card { background: #fff; border: 1.5px dashed #555; border-radius: 10px; padding: 10px 10px 8px;
+                display: flex; flex-direction: column; align-items: center; text-align: center;
+                break-inside: avoid; page-break-inside: avoid; }
+        .head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; }
+        .qr { width: 110px; height: 110px; margin: 4px 0 6px; }
+        .qr img, .qr canvas { width: 110px !important; height: 110px !important; }
+        .brand { font-size: 11px; font-weight: bold; letter-spacing: .5px; color: #555; text-transform: uppercase;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .price { font-size: 22px; font-weight: bold; }
+        .code { font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; letter-spacing: 1px;
+                border: 1px solid #111; border-radius: 5px; padding: 2px 8px; white-space: nowrap; margin-bottom: 5px; }
+        .row { font-size: 11px; line-height: 1.5; white-space: nowrap; }
+        .row b { font-weight: bold; }
+        .empty { padding: 40px; text-align: center; }
+        @media print {
+            body { background: #fff; }
+            .toolbar { display: none; }
+            .sheet { padding: 0; gap: 6px; grid-template-columns: repeat(3, 1fr); max-width: none; }
+            @page { margin: 10mm; }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <h1 id="title">Vouchers</h1>
+        <button type="button" onclick="window.print()">🖨 Print / Save as PDF</button>
+        <div class="tip">In the print window choose your printer - or "Save as PDF" to keep a copy.
+            Customers scan the QR with the "Scan QR Code" button on the WiFi login page, or type the code.</div>
+    </div>
+    <div class="sheet" id="sheet"></div>
+
+    <script src="qrcode.min.js"></script>
+    <script>
+        // Same format as the customer portal: 1440 -> "01d:00H:00M".
+        function formatDHM(totalMinutes) {
+            const m = Math.max(0, Math.round(totalMinutes || 0));
+            const pad = n => String(n).padStart(2, '0');
+            return `${pad(Math.floor(m / 1440))}d:${pad(Math.floor((m % 1440) / 60))}H:${pad(m % 60)}M`;
+        }
+        function formatData(mb) {
+            if (!mb) return 'Unlimited';
+            return mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 1 : 0) + ' GB' : mb + ' MB';
+        }
+        function el(tag, cls, text) {
+            const e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (text !== undefined) e.textContent = text;
+            return e;
+        }
+        function row(label, value) {
+            const r = el('div', 'row');
+            r.appendChild(el('b', null, label));
+            r.appendChild(document.createTextNode(' ' + value));
+            return r;
+        }
+
+        let batch = null;
+        try { batch = JSON.parse(localStorage.getItem('zxheifi_print_batch') || 'null'); } catch (e) { batch = null; }
+        const sheet = document.getElementById('sheet');
+
+        if (!batch || !batch.codes || !batch.codes.length) {
+            sheet.appendChild(el('div', 'empty', 'No vouchers to print. Generate them from the Admin Dashboard first.'));
+        } else {
+            const made = new Date(batch.generatedAt || Date.now());
+            document.getElementById('title').textContent =
+                `${batch.codes.length} voucher(s) · ₱${batch.peso} · made ${made.toLocaleString()}`;
+            document.title = `Vouchers ₱${batch.peso} - ${made.toLocaleDateString()}`;
+            const validity = batch.validityMinutes
+                ? `${formatDHM(batch.validityMinutes)} (until ${new Date(made.getTime() + batch.validityMinutes * 60000).toLocaleDateString()})`
+                : 'No expiry';
+
+            batch.codes.forEach(code => {
+                const card = el('div', 'card');
+                const head = el('div', 'head');
+                head.appendChild(el('div', 'brand', batch.brand || 'WiFi Voucher'));
+                head.appendChild(el('div', 'price', `₱${batch.peso}`));
+                card.appendChild(head);
+                const qr = el('div', 'qr');
+                card.appendChild(qr);
+                card.appendChild(el('div', 'code', code));
+                card.appendChild(row('Time:', formatDHM(batch.minutes)));
+                card.appendChild(row('Data:', formatData(batch.dataMb)));
+                card.appendChild(row('Valid:', validity));
+                sheet.appendChild(card);
+                new QRCode(qr, { text: code, width: 192, height: 192, colorDark: '#000000',
+                                 colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+# Build output (binaries go to GitHub Releases, not the repo)
+desktop-app/build/
+desktop-app/dist/
+desktop-app/*.spec
+release/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PlatformIO / Arduino build folders
+.pio/
+firmware/build/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.tmp
+
+# Never commit local settings or secrets
+*.env
+setup-companion.json

@@ -1,0 +1,457 @@
+/* ZxheiFi - "Coin Meter" theme
+   Grounded in the actual object this software runs: a coin-op utility
+   meter, not a generic dark SaaS dashboard. Palette re-themed (2026-09)
+   from ZxheiFi's own logo (sampled directly from the source PNG) -
+   electric cyan/teal on deep navy, replacing the earlier brass/peso
+   placeholder palette. A real "coin slot" input remains this redesign's
+   one signature element.
+
+   Must stay 100% self-contained - system fonts only, no external
+   requests of any kind. login.html/status.html are shown to a customer
+   BEFORE they have any internet access at all (they're still walled
+   off), so a Google Fonts/CDN request would just hang or fail there. */
+
+/* Overridden at runtime by script.js's applyBranding() from
+   /api/branding - --accent/--accent-dark are the only colors
+   rebrandable from the admin dashboard (Settings > Branding). --peso
+   (success/money) and --alert (danger/expired) stay fixed regardless
+   of branding, since they signal a fixed MEANING, not brand identity. */
+:root {
+    --accent: #2dd4c9;
+    --accent-dark: #1c7fc4;
+    --ink: #081527;
+    --panel: #0d1e33;
+    --panel-inset: #050d18;
+    --peso: #34d399;
+    --peso-dark: #22b787;
+    --alert: #ef4b45;
+    --text: #eef6fa;
+    --text-dim: #7d93a3;
+    --border: #22384a;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-meter: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', 'Courier New', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font-sans);
+    background: var(--ink);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.container {
+    width: 100%; max-width: 420px;
+}
+
+/* admin.html only - the login/status pages stay phone-width on purpose
+   (captive portal), but the dashboard's tables need real room. */
+.container-wide { max-width: 900px; }
+
+.glass-card {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+    animation: slideUp 0.4s ease-out;
+    overflow: hidden;
+}
+
+/* Signature accent stripe - brass fading to peso-green, a quieter nod
+   to the original JuanFi's 4-color rainbow divider ("time/value
+   flowing") without directly copying it. A pseudo-element rather than
+   border-image, which would otherwise paint the gradient on all four
+   sides at their respective widths instead of just the top. */
+.glass-card::before {
+    content: "";
+    position: absolute; top: 0; left: 0; right: 0; height: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--peso));
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.logo {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.logo img {
+    width: 76px; height: 76px;
+    object-fit: contain;
+}
+
+.title {
+    font-size: 26px; font-weight: 700;
+    text-align: center;
+    margin-bottom: 8px;
+    color: var(--text);
+    letter-spacing: -0.01em;
+}
+
+.subtitle {
+    text-align: center; color: var(--text-dim);
+    font-size: 14px; margin-bottom: 24px;
+}
+
+/* Buttons */
+.btn {
+    padding: 14px 24px; border: none; border-radius: 10px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #04141a;
+}
+
+.btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+.btn-secondary {
+    background: rgba(255,255,255,0.06); color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover { background: rgba(255,255,255,0.1); }
+
+.btn-warning { background: var(--accent); color: #04141a; }
+.btn-warning:hover { filter: brightness(1.1); }
+
+.btn-danger { background: var(--alert); color: #fff; }
+.btn-danger:hover { filter: brightness(1.1); }
+
+.btn-success { background: var(--peso); color: #06170e; }
+.btn-success:hover { filter: brightness(1.1); }
+
+/* Forms */
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+
+.form-group label {
+    font-size: 13px; font-weight: 500; color: var(--text-dim);
+}
+
+.form-group input, .form-group select {
+    padding: 14px 16px; border: 1px solid var(--border);
+    border-radius: 10px; background: rgba(0,0,0,0.25); color: var(--text); font-size: 16px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-group input:focus, .form-group select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(224,163,57,0.2);
+}
+
+/* The voucher code field is this redesign's signature element: styled
+   like a physical coin slot (a dark inset slit) rather than a plain
+   text box, since that's the one thing every version of this product
+   is literally named after. Monospace + letter-spacing gives typed
+   codes a "reading off a meter" feel. */
+#username, #pppoeUser {
+    font-family: var(--font-meter);
+    letter-spacing: 0.08em;
+    background: var(--panel-inset);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.5);
+    border-radius: 999px;
+    text-align: center;
+}
+
+/* Mode toggle (login.html: Hotspot / PPPoE) */
+.mode-toggle {
+    display: flex; gap: 6px; margin-bottom: 20px;
+    background: var(--panel-inset); border-radius: 10px; padding: 4px;
+}
+
+.mode-btn {
+    flex: 1; padding: 10px 12px; border: none; background: transparent;
+    color: var(--text-dim); font-size: 13px; font-weight: 600; border-radius: 7px; cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-btn.active { background: var(--accent); color: #04141a; }
+
+/* QR scan button + info notes (login.html) */
+.qr-scan { margin: 4px 0; }
+.qr-scan .btn { width: 100%; }
+
+.pppoe-info { margin-top: 12px; text-align: center; color: var(--text-dim); }
+
+.qr-text { font-size: 13px; color: var(--text-dim); margin-top: 12px; }
+
+/* Status display (status.html) - the meter readout. Time/data are the
+   hero numbers, so they get the monospace tabular treatment; everything
+   else in the list stays quiet sans-serif around them. */
+.status-card {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    border-radius: 14px; padding: 8px 20px; margin-bottom: 20px;
+}
+
+.status-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+
+.status-item:last-child { border-bottom: none; }
+
+.status-item .label { font-size: 14px; color: var(--text-dim); }
+.status-item .value {
+    font-family: var(--font-meter);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px; font-weight: 600; color: var(--text);
+}
+
+/* Controls row (status.html) */
+.controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.controls .btn { flex: 1; min-width: 120px; }
+
+/* Generated voucher list (admin.html) */
+.voucher-list { max-height: 240px; overflow-y: auto; margin-top: 16px; }
+
+/* Cards */
+.card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px;
+    margin-bottom: 20px;
+}
+
+.card h2 { font-size: 19px; margin-bottom: 16px; }
+
+/* Stat cards (Overview, Sales tabs) */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.stat-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+.stat-card h3 {
+    font-size: 11px; font-weight: 500; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.stat-value {
+    font-family: var(--font-meter);
+    font-variant-numeric: tabular-nums;
+    font-size: 21px; font-weight: 700; color: var(--peso);
+}
+
+/* Tables (Users, Subscriptions, Sales, Logs, Admins) */
+.table-container { overflow-x: auto; border-radius: 10px; }
+
+#usersTable, #subscribersTable, #salesTable, #logsTable, #adminsTable {
+    width: 100%; border-collapse: collapse; font-size: 13px; min-width: 480px;
+}
+#usersTable th, #usersTable td,
+#subscribersTable th, #subscribersTable td,
+#salesTable th, #salesTable td,
+#logsTable th, #logsTable td,
+#adminsTable th, #adminsTable td {
+    padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border);
+}
+#usersTable th, #subscribersTable th, #salesTable th, #logsTable th, #adminsTable th {
+    color: var(--text-dim); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;
+}
+#usersTable tr:hover td, #subscribersTable tr:hover td,
+#salesTable tr:hover td, #logsTable tr:hover td, #adminsTable tr:hover td {
+    background: rgba(255,255,255,0.03);
+}
+
+/* Toggle switch (Settings > Night Promo) */
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-switch .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: rgba(255,255,255,0.12); border-radius: 24px;
+    transition: background 0.2s ease;
+}
+.toggle-switch .slider::before {
+    content: ""; position: absolute; height: 18px; width: 18px;
+    left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
+    transition: transform 0.2s ease;
+}
+.toggle-switch input:checked + .slider { background: var(--accent); }
+.toggle-switch input:checked + .slider::before { transform: translateX(20px); }
+
+/* Tabs */
+/* Sound toggle - small, unobtrusive, top-right corner of the card.
+   Also doubles as the required user-gesture that lets background music
+   actually start (browsers block audio autoplay before any tap). */
+.sound-toggle {
+    position: absolute; top: 16px; right: 16px; z-index: 2;
+    width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--panel-inset); color: var(--text-dim);
+    font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.sound-toggle.on { color: var(--accent); border-color: var(--accent); }
+
+/* Coin-insert prompt - the login page's one playful/instructional
+   element, grounded in the actual coin-slot subject matter. Plays
+   coin-insert.mp3 on tap (see script.js's onCoinInsertTap()); purely
+   decorative/instructional otherwise, doesn't submit the form. */
+.coin-insert-prompt {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 14px; margin-bottom: 4px; border: 1px dashed var(--border); border-radius: 10px;
+    background: var(--panel-inset); color: var(--text-dim);
+    font-family: var(--font-sans); font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+.coin-insert-prompt:hover, .coin-insert-prompt:active { border-color: var(--accent); color: var(--accent); }
+.coin-insert-icon { font-size: 20px; animation: coinBounce 1.6s ease-in-out infinite; }
+@keyframes coinBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+}
+
+.tabs-wrap { position: relative; margin-bottom: 24px; }
+
+.tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; padding-right: 28px; }
+
+/* A always-visible "more tabs this way" chevron, not just a background
+   fade - admin.html has 7 tabs and needs to work well on a phone
+   screen, where most of them start off-screen. Sits outside the
+   scrolling .tabs element so it doesn't scroll away with the content;
+   pointer-events:none so it never blocks a tap on the tab underneath. */
+.tabs-wrap::after {
+    content: "\203A";
+    position: absolute; top: 0; right: 0; bottom: 8px;
+    display: flex; align-items: center; padding: 0 6px 0 14px;
+    font-size: 20px; font-weight: 700; color: var(--accent);
+    background: linear-gradient(to right, transparent, rgba(13,30,51,0.4) 30%, var(--panel) 60%);
+    pointer-events: none;
+}
+
+.tab-btn {
+    padding: 10px 20px; border: none; background: transparent;
+    color: var(--text-dim); font-size: 14px; font-weight: 600; border-radius: 8px; cursor: pointer;
+    white-space: nowrap;
+}
+
+.tab-btn.active { background: var(--accent); color: #04141a; }
+
+/* Status bar */
+.status-bar { display: flex; align-items: center; gap: 10px; margin-top: 20px; padding: 12px 16px; background: rgba(0,0,0,0.25); border-radius: 10px; font-size: 14px; }
+
+.status-indicator {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--peso); animation: pulse 2s infinite;
+}
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* QR modal */
+.qr-modal {
+    position: fixed; top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.7);
+    display: flex; justify-content: center; align-items: center;
+    z-index: 1000; padding: 20px;
+}
+
+.qr-content { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding:32px; max-width:320px; width:100%; text-align:center; position:relative; }
+
+.close-btn {
+    position:absolute; top:16px; right:16px; font-size:28px; color: var(--text-dim); cursor:pointer;
+    transition:color 0.2s;
+}
+
+.close-btn:hover { color: var(--text); }
+
+#qrCode { background:#fff; padding:16px; border-radius:10px; display:inline-block; }
+
+/* Admin tabs */
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+
+.tab-content h2 { margin-bottom:20px; font-size:19px; }
+
+/* Voucher list */
+.voucher-item { margin-bottom:12px; }
+.voucher-code { font-family: var(--font-meter); letter-spacing: 0.04em; font-size:16px; font-weight:700; color:var(--accent); }
+.voucher-type { font-size:12px; color: var(--text-dim); }
+
+/* Tier pricing row (Settings > Voucher Pricing): 3 number inputs side
+   by side on wide screens, stacked on narrow ones - see the mobile
+   media query below. min-width:0 keeps flex items from refusing to
+   shrink past their content size and overflowing the card. */
+.tier-price-row { display: flex; gap: 8px; }
+.tier-price-row input { min-width: 0; }
+
+/* Responsive */
+@media (max-width:480px) {
+    .title { font-size:22px; }
+    .stats-grid { grid-template-columns:1fr; }
+    .tier-price-row { flex-direction: column; }
+}
+
+/* Coin session modal (script.js ensureCoinModal) - reuses .qr-modal/.qr-content */
+.coin-content { display: flex; flex-direction: column; gap: 10px; }
+.coin-total { font-size: 44px; font-weight: 700; color: var(--peso); margin: 4px 0 0; }
+.coin-minutes { font-size: 18px; margin: 0; }
+.coin-note { color: var(--alert); font-size: 13px; margin: 0; min-height: 0; }
+.coin-note:empty { display: none; }
+.coin-timer { font-size: 12px; opacity: .7; margin: 0 0 6px; }
+
+/* Admin login form (admin.html #adminLogin) - reuses .qr-modal/.qr-content */
+.admin-login { z-index: 1000; }
+.admin-login-card { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.admin-login-card h2 { text-align: center; margin: 0 0 4px; }
+.admin-login-logo { width: 64px; height: 64px; margin: 0 auto; display: block; }
+.admin-login-error { color: var(--alert); font-size: 13px; margin: 0; }
+.admin-login-error:empty { display: none; }
+.admin-login-hint { font-size: 12px; opacity: .65; margin: 0; text-align: center; }
+.admin-logout { position: absolute; top: 16px; right: 16px; width: auto; padding: 6px 14px; font-size: 13px; }
+
+/* status.html: shown instead of redirecting when the session can't be identified */
+.status-notice { background: var(--panel-inset, rgba(255,255,255,0.04)); border: 1px solid var(--alert); border-radius: 12px; padding: 14px; margin-bottom: 16px; font-size: 14px; }
+.status-notice p { margin: 0 0 10px; }
+.status-notice .btn { display: inline-block; width: auto; text-decoration: none; }
+
+/* Settings > Announcement banner (login/status pages) */
+.announcement { background: rgba(45, 212, 201, 0.12); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: 16px; font-size: 14px; line-height: 1.4; white-space: pre-line; text-align: left; }
+
+/* Rate list at the bottom of login.html */
+.rates-box { margin-top: 18px; text-align: left; }
+.rates-box h3 { font-size: 14px; margin: 0 0 8px; opacity: .8; }
+.rates-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rates-table th { text-align: left; font-weight: 600; opacity: .7; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.rates-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+
+/* Admin: hints, rate-profile d/h/m preview, sales filter, print note */
+.hint { font-size: 13px; color: #aaa; margin-bottom: 12px; }
+.rp-hint { font-size: 11px; color: #8a8a99; margin-top: 2px; }
+.sales-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+.sales-filter select, .sales-filter input { width: auto; }
+.sales-filter .btn { width: auto; }
+.voucher-print-note { margin-top: 10px; font-size: 13px; }
+.voucher-print-note a { color: var(--accent); }
+#announcement[maxlength] { width: 100%; }
+textarea#announcement { width: 100%; resize: vertical; font: inherit; padding: 10px; border-radius: 8px;
+  background: var(--panel-inset, rgba(255,255,255,0.04)); color: inherit; border: 1px solid var(--border); }
+
+/* Admin: firmware mismatch banner + Save result line */
+.fw-banner { background: #7f1d1d; border: 1px solid #ef4444; color: #fff; border-radius: 10px; padding: 12px 14px;
+  margin: 0 0 16px; font-size: 14px; line-height: 1.45; }
+.save-status { border-radius: 10px; padding: 10px 14px; margin: 12px 0; font-size: 14px; }
+.save-status.pending { background: rgba(255,255,255,0.06); border: 1px solid var(--border); }
+.save-status.ok { background: rgba(34,197,94,0.15); border: 1px solid #22c55e; }
+.save-status.warn { background: rgba(234,179,8,0.15); border: 1px solid #eab308; }
+.save-status.error { background: rgba(239,68,68,0.15); border: 1px solid #ef4444; }

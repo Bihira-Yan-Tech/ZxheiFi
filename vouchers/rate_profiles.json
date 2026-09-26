@@ -1,0 +1,5 @@
+[
+  {"pesoAmount": 10, "minutes": 60, "dataMb": 500, "validityMinutes": 1440, "speedProfile": "1"},
+  {"pesoAmount": 20, "minutes": 120, "dataMb": 1200, "validityMinutes": 1440, "speedProfile": "2"},
+  {"pesoAmount": 30, "minutes": 180, "dataMb": 2000, "validityMinutes": 1440, "speedProfile": "3"}
+]

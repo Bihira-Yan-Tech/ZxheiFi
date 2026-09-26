@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZxheiFi - Login</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-mac="$(mac)" data-ip="$(ip)">
+    <div class="container">
+        <div class="glass-card" id="loginCard">
+            <button type="button" class="sound-toggle" id="soundToggle" onclick="toggleSound()" title="Sound">🔇</button>
+            <div class="logo">
+                <img src="logo.png" alt="ZxheiFi">
+            </div>
+            <div class="announcement" id="announcement" style="display:none;"></div>
+            <h1 class="title" id="brandTitle">ZXHEIFI</h1>
+            <p class="subtitle">Connect to High-Speed Internet</p>
+            
+            <!-- Mode Toggle -->
+            <div class="mode-toggle">
+                <button class="mode-btn active" data-mode="hotspot" onclick="setMode('hotspot')">Hotspot Login</button>
+                <button class="mode-btn" data-mode="pppoe" onclick="setMode('pppoe')">PPPoE Login</button>
+            </div>
+
+            <!-- Hotspot Mode Form -->
+            <form id="hotspotForm" class="login-form">
+                <button type="button" class="coin-insert-prompt" id="coinInsertPrompt" onclick="onCoinInsertTap()">
+                    <span class="coin-insert-icon">🪙</span>
+                    <span>Insert Coin</span>
+                </button>
+                <div class="form-group">
+                    <label for="username">Voucher Code or Subscriber Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter voucher code" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Subscriber Password (leave blank for vouchers)</label>
+                    <input type="password" id="password" name="password" placeholder="Leave blank if none">
+                </div>
+                <div class="qr-scan">
+                    <button type="button" class="btn btn-secondary" onclick="scanQR()">
+                        <span>📱 Scan QR Code</span>
+                    </button>
+                </div>
+                <button type="submit" class="btn btn-primary">Connect</button>
+            </form>
+
+            <!-- PPPoE Mode Form -->
+            <form id="pppoeForm" class="login-form" style="display:none;">
+                <div class="form-group">
+                    <label for="pppoeUser">PPPoE Username</label>
+                    <input type="text" id="pppoeUser" name="username" placeholder="Enter voucher code" required>
+                </div>
+                <div class="form-group">
+                    <label for="pppoePass">PPPoE Password</label>
+                    <input type="password" id="pppoePass" name="password" placeholder="Leave blank if none">
+                </div>
+                <div class="qr-scan">
+                    <button type="button" class="btn btn-secondary" onclick="scanQR()">
+                        <span>📱 Scan QR Code</span>
+                    </button>
+                </div>
+                <button type="submit" class="btn btn-primary">Connect</button>
+                <div class="pppoe-info">
+                    <p><small>PPPoE credentials will be displayed here</small></p>
+                </div>
+            </form>
+
+            <!-- Price list = Settings > Rate Profiles (see script.js showRates) -->
+            <div class="rates-box" id="ratesBox" style="display:none;">
+                <h3>Rates</h3>
+                <table class="rates-table">
+                    <thead><tr><th>Amount</th><th>Time</th><th>Validity</th></tr></thead>
+                    <tbody id="ratesBody"></tbody>
+                </table>
+            </div>
+
+            <div class="status-bar">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span id="statusText">Ready</span>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+    <script>
+      /* Stale-script guard: a phone that kept an older script.js/style.css in its
+         cache (while this page is newer) had buttons that silently did nothing.
+         Refetch both once, then reload; if still stale, say how to fix it. */
+      (function () {
+        var want = '1.0.0';
+        if (window.ZX_GUI_VERSION === want) return;
+        var key = 'zx_gui_refetch';
+        var tried = null;
+        try { tried = sessionStorage.getItem(key); sessionStorage.setItem(key, want); } catch (e) {}
+        if (tried === want) {
+          var d = document.createElement('div');
+          d.style.cssText = 'background:#b91c1c;color:#fff;padding:10px 14px;font:14px sans-serif;text-align:center';
+          d.textContent = 'Luma pa ang naka-save na files ng page na ito. I-refresh ang page (o i-clear ang browser cache).';
+          document.body.insertBefore(d, document.body.firstChild);
+          return;
+        }
+        Promise.all(['script.js', 'style.css'].map(function (f) {
+          return fetch(f, { cache: 'reload' }).catch(function () {});
+        })).then(function () { location.reload(); });
+      })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZxheiFi - Admin</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- One login form instead of two back-to-back prompt() boxes (see
+         script.js showAdminLogin/submitAdminLogin). -->
+    <div class="qr-modal admin-login" id="adminLogin" style="display:none;">
+        <form class="qr-content admin-login-card" id="adminLoginForm">
+            <img src="logo.png" alt="ZxheiFi" class="admin-login-logo">
+            <h2>Admin Login</h2>
+            <div class="form-group">
+                <label for="adminUser">Username</label>
+                <input type="text" id="adminUser" value="admin" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+            </div>
+            <div class="form-group">
+                <label for="adminPass">Password</label>
+                <input type="password" id="adminPass" autocomplete="current-password" required>
+            </div>
+            <p class="admin-login-error" id="adminLoginError"></p>
+            <button type="submit" class="btn btn-primary" id="adminLoginBtn">Login</button>
+            <p class="admin-login-hint">Password = yung "Admin password" na inilagay sa Setup Wizard ng NodeMCU.</p>
+        </form>
+    </div>
+
+    <div class="container container-wide">
+        <div class="glass-card">
+            <div class="logo">
+                <img src="logo.png" alt="ZxheiFi">
+            </div>
+            <h1 class="title">Admin Dashboard</h1>
+            <div class="fw-banner" id="fwBanner" style="display:none;"></div>
+            <button type="button" class="btn btn-secondary admin-logout" onclick="adminLogout()">Logout</button>
+            
+            <div class="tabs-wrap">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="overview" onclick="openTab(event, 'overview')">Overview</button>
+                    <button class="tab-btn" data-tab="vouchers" onclick="openTab(event, 'vouchers')">Vouchers</button>
+                    <button class="tab-btn" data-tab="users" onclick="openTab(event, 'users')">Active Users</button>
+                    <button class="tab-btn" data-tab="subscriptions" onclick="openTab(event, 'subscriptions')">Subscriptions</button>
+                    <button class="tab-btn" data-tab="sales" onclick="openTab(event, 'sales')">Sales</button>
+                    <button class="tab-btn" data-tab="logs" onclick="openTab(event, 'logs')">Logs</button>
+                    <button class="tab-btn" data-tab="admins" onclick="openTab(event, 'admins')">Admins</button>
+                    <button class="tab-btn" data-tab="settings" onclick="openTab(event, 'settings')">Settings</button>
+                </div>
+            </div>
+            
+            <div id="overview" class="tab-content" style="display:block;">
+                <h2>System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Users</h3>
+                        <p class="stat-value" id="totalUsers">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Active Sessions</h3>
+                        <p class="stat-value" id="activeSessions">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Data Used Today</h3>
+                        <p class="stat-value" id="dataUsed">0 GB</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Revenue Today</h3>
+                        <p class="stat-value" id="revenueToday">₱0.00</p>
+                    </div>
+                </div>
+                <div class="status-bar">
+                    <span class="status-indicator" id="adminStatusIndicator"></span>
+                    <span id="adminStatusText">System Online</span>
+                </div>
+            </div>
+            
+            <div id="vouchers" class="tab-content" style="display:none;">
+                <h2>Voucher Management</h2>
+                <div class="form-group">
+                    <label for="voucherType">Voucher Type:</label>
+                    <select id="voucherType"></select>
+                </div>
+                <div class="form-group">
+                    <label for="voucherCount">Quantity:</label>
+                    <input type="number" id="voucherCount" min="1" value="1">
+                </div>
+                <button class="btn btn-primary" id="generateVouchersBtn" onclick="generateVouchers()">Generate Vouchers</button>
+                <p class="hint">Opens a printable sheet in a new tab (QR code, amount, time and validity per
+                    voucher). Use its Print button - choose "Save as PDF" there to keep a PDF copy.</p>
+                <div id="voucherPrintNote" class="voucher-print-note"></div>
+
+                <h2 style="margin-top:24px;">Import Printed Batch</h2>
+                <div class="form-group">
+                    <label for="voucherCsvFile">CSV from vouchers/generator.py:</label>
+                    <input type="file" id="voucherCsvFile" accept=".csv">
+                </div>
+                <button class="btn btn-secondary" onclick="importVoucherCsv()">Import CSV</button>
+                <div id="importResult" style="font-size:13px;color:#aaa;margin-top:8px;"></div>
+            </div>
+            
+            <div id="users" class="tab-content" style="display:none;">
+                <h2>Active Users</h2>
+                <div class="table-container">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Mode</th>
+                                <th>Time Left</th>
+                                <th>Data Left</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- User rows will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div id="subscriptions" class="tab-content" style="display:none;">
+                <h2>Subscriptions</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:16px;">
+                    Recurring accounts (boarding houses, monthly tenants) with
+                    unlimited time/data, admin-managed billing - no online
+                    payment, just mark renewals here as they're paid.
+                </p>
+                <div class="form-group">
+                    <label for="subUsername">Username:</label>
+                    <input type="text" id="subUsername" placeholder="e.g. room5">
+                </div>
+                <div class="form-group">
+                    <label for="subPassword">Password:</label>
+                    <input type="text" id="subPassword" placeholder="Set a login password">
+                </div>
+                <div class="form-group">
+                    <label for="subTier">Bandwidth Speed:</label>
+                    <select id="subTier"><option value="1">Loading speed profiles...</option></select>
+                </div>
+                <div class="form-group">
+                    <label for="subDays">Initial Period (days):</label>
+                    <input type="number" id="subDays" min="1" value="30">
+                </div>
+                <div class="form-group">
+                    <label for="subPrice">Amount Collected (PHP):</label>
+                    <input type="number" id="subPrice" min="0" step="0.01" placeholder="For the Sales tab's records">
+                </div>
+                <button class="btn btn-primary" onclick="addSubscriber()">Add Subscriber</button>
+
+                <div class="table-container" style="margin-top:20px;">
+                    <table id="subscribersTable">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Speed</th>
+                                <th>Expires</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Subscriber rows will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="sales" class="tab-content" style="display:none;">
+                <h2>Sales Inventory</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Today</h3>
+                        <p class="stat-value" id="salesToday">₱0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>This Week</h3>
+                        <p class="stat-value" id="salesWeek">₱0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>This Month</h3>
+                        <p class="stat-value" id="salesMonth">₱0.00</p>
+                    </div>
+                </div>
+                <div class="sales-filter">
+                    <select id="salesRange" onchange="onSalesRangeChange()">
+                        <option value="today">Today</option>
+                        <option value="7">Last 7 days</option>
+                        <option value="month" selected>This month</option>
+                        <option value="30">Last 30 days</option>
+                        <option value="all">All (last 90 days)</option>
+                        <option value="day">A specific date</option>
+                        <option value="custom">Custom range</option>
+                    </select>
+                    <input type="date" id="salesFrom" style="display:none;" onchange="renderSales()">
+                    <span id="salesToLabel" style="display:none;">to</span>
+                    <input type="date" id="salesTo" style="display:none;" onchange="renderSales()">
+                    <button class="btn btn-secondary" onclick="exportSalesCsv()">Export CSV</button>
+                </div>
+                <p class="hint" id="salesSummary"></p>
+                <div class="table-container" style="margin-top:12px;">
+                    <table id="salesTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Coin</th>
+                                <th>Voucher</th>
+                                <th>Subscription</th>
+                                <th>Total</th>
+                                <th>Users</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Daily rows will be populated here (last 90 days) -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="logs" class="tab-content" style="display:none;">
+                <h2>Activity Log</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:16px;">
+                    Last 300 events: coin insertions, voucher/subscriber
+                    logins, admin actions, and system events. Oldest entries
+                    drop off automatically.
+                </p>
+                <div class="table-container">
+                    <table id="logsTable">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Type</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Log rows will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="admins" class="tab-content" style="display:none;">
+                <h2>Admin Accounts</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:16px;">
+                    Super admins can change settings, manage subscriptions,
+                    and manage other admin accounts. Staff can view stats/
+                    sales/logs, generate vouchers, and kick users.
+                </p>
+                <div class="form-group">
+                    <label for="adminUsername">Username:</label>
+                    <input type="text" id="adminUsername" placeholder="e.g. cashier1">
+                </div>
+                <div class="form-group">
+                    <label for="adminNewPassword">Password:</label>
+                    <input type="text" id="adminNewPassword" placeholder="Set a login password">
+                </div>
+                <div class="form-group">
+                    <label for="adminRole">Role:</label>
+                    <select id="adminRole">
+                        <option value="staff">Staff</option>
+                        <option value="super">Super Admin</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="addAdminAccount()">Add Admin Account</button>
+
+                <div class="table-container" style="margin-top:20px;">
+                    <table id="adminsTable">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Admin account rows will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="settings" class="tab-content" style="display:none;">
+                <h2>Announcement</h2>
+                <p class="hint">Shown at the top of the customer's login and status pages - updates, promos,
+                    instructions. Leave empty for none. Text only, up to 300 characters.</p>
+                <div class="form-group">
+                    <textarea id="announcement" maxlength="300" rows="3" placeholder="e.g. Promo: 5 pesos = 1 hour this weekend!"></textarea>
+                </div>
+
+                <h2 style="margin-top:24px;">System Settings</h2>
+                <div class="form-group">
+                    <label for="nightPromoEnabled">Night Promo (12AM-6AM):</label>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="nightPromoEnabled" checked>
+                        <span class="slider"></span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="idleTimeout">Idle Timeout (minutes):</label>
+                    <input type="number" id="idleTimeout" min="1" value="5">
+                </div>
+                <div class="form-group">
+                    <label for="autoReboot">Auto Reboot Time:</label>
+                    <input type="time" id="autoReboot" value="03:00">
+                </div>
+                <h2 style="margin-top:24px;">Rate Profiles</h2>
+                <p class="hint">
+                    One table for BOTH coins and vouchers: a &#8369;5 coin and a &#8369;5 voucher give the
+                    same time, data, validity and speed. Add a row for every coin your acceptor takes (a
+                    coin with no row is not counted) and every voucher price you sell. Minutes and
+                    validity are in minutes - the grey text shows them as days/hours/minutes. Speed comes
+                    from Speed Profiles below. Customers see this list (amount, time, validity) at the
+                    bottom of the login page. Vouchers already made keep their old values.
+                </p>
+                <table id="rateProfilesTable" style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+                    <thead>
+                        <tr style="text-align:left;color:#aaa;font-size:12px;">
+                            <th>Peso</th><th>Minutes</th><th>Data (MB, 0=unlimited)</th>
+                            <th>Validity (min, 0=none)</th><th>Speed</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rateProfilesBody"></tbody>
+                </table>
+                <button type="button" class="btn btn-secondary" onclick="addRateProfileRow()" style="margin-bottom:16px;">+ Add Profile</button>
+                <div class="form-group" style="display:flex;gap:8px;">
+                    <button type="button" class="btn btn-secondary" onclick="exportRateProfiles()">Export Rates</button>
+                    <label class="btn btn-secondary" style="margin:0;cursor:pointer;">
+                        Import Rates
+                        <input type="file" id="importRatesFile" accept="application/json" style="display:none;" onchange="importRateProfiles(event)">
+                    </label>
+                </div>
+
+                <h2 style="margin-top:24px;">Blocked Devices</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:12px;">
+                    Devices blocked from the Active Users tab. Enforced by
+                    a RouterOS ip-binding entry, so it holds even across a
+                    NodeMCU reboot.
+                </p>
+                <div id="blockedList" style="margin-bottom:16px;"></div>
+
+                <h2 style="margin-top:24px;">Speed Profiles</h2>
+                <p class="hint">
+                    Named bandwidth limits that Rate Profiles and Subscribers pick from (e.g. "Piso 2M" =
+                    2 Mbps down / 1 up for the &#8369;1-&#8369;10 coins). Used by hotspot and PPPoE alike.
+                    Saved straight to the MikroTik - new ones are created there, changed ones apply at
+                    once, even to users already connected. A speed still used by a rate or subscriber
+                    can't be removed.
+                </p>
+                <table id="speedProfilesTable" style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+                    <thead>
+                        <tr style="text-align:left;color:#aaa;font-size:12px;">
+                            <th>Name</th><th>Download (Mbps)</th><th>Upload (Mbps)</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="speedProfilesBody"></tbody>
+                </table>
+                <button type="button" class="btn btn-secondary" onclick="addSpeedProfileRow()" style="margin-bottom:16px;">+ Add Speed Profile</button>
+
+                <h2 style="margin-top:24px;">Coin Slot</h2>
+                <p class="hint">
+                    Which NodeMCU pins your baseboard uses. Defaults: coin signal D5, relay D7 (the relay
+                    powers the coin acceptor only after a customer taps Insert Coin - otherwise coins are
+                    rejected). Applied as soon as you save, no restart needed.
+                </p>
+                <div class="form-group">
+                    <label for="coinPin">Coin signal pin:</label>
+                    <select id="coinPin">
+                        <option>D1</option><option>D2</option><option>D5</option><option>D6</option><option>D7</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="relayPin">Relay pin (coin acceptor power):</label>
+                    <select id="relayPin">
+                        <option>D1</option><option>D2</option><option>D5</option><option>D6</option><option>D7</option>
+                        <option value="none">None (acceptor always on)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="relayActiveHigh">Relay switches ON with:</label>
+                    <select id="relayActiveHigh">
+                        <option value="true">HIGH signal (relay jumper on H)</option>
+                        <option value="false">LOW signal (relay jumper on L / low-trigger module)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="coinPulseValue">Pesos per pulse:</label>
+                    <input type="number" id="coinPulseValue" min="1" max="100" value="1">
+                </div>
+                <p class="hint">Leave "Pesos per pulse" at 1 when the acceptor is set to 1 pulse = &#8369;1
+                    (&#8369;5 = 5 pulses, &#8369;10 = 10 pulses).</p>
+
+                <h2 style="margin-top:24px;">Branding</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:12px;">
+                    Changes the business name and accent color across the
+                    portal - no code editing needed. Logo changes still
+                    require editing the GUI files directly (see docs/06).
+                </p>
+                <div class="form-group">
+                    <label for="brandName">Business Name:</label>
+                    <input type="text" id="brandName" placeholder="ZXHEIFI">
+                </div>
+                <div class="form-group">
+                    <label for="brandColor">Accent Color:</label>
+                    <input type="color" id="brandColor" value="#2dd4c9">
+                </div>
+                <div class="form-group">
+                    <label for="soundEnabled">Enable Sounds:</label>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="soundEnabled">
+                        <span class="slider"></span>
+                    </div>
+                </div>
+                <p class="hint" style="margin-top:-8px;">
+                    Plays sounds on the customer pages if you've added audio files to mikrotik/gui/sounds/
+                    (exact file names below), then clicked Upload GUI Files in the desktop app:
+                    <b>insert-coin.mp3</b> (voice prompt when Insert Coin opens),
+                    <b>coin-drop.mp3</b> (each accepted coin),
+                    <b>coin-music.mp3</b> (loops while the coin window counts down),
+                    <b>success.mp3</b> (connected), <b>error.mp3</b> (failed),
+                    <b>click.mp3</b> (button taps), <b>background-music.mp3</b> (login page music).
+                    Any missing file is simply silent.
+                </p>
+
+                <h2 style="margin-top:24px;">Telegram Notifications</h2>
+                <p style="font-size:13px;color:#aaa;margin-bottom:12px;">
+                    Get a Telegram message for every voucher/subscriber/coin
+                    sale. Create a bot via @BotFather to get a token, then
+                    message your bot once and check
+                    api.telegram.org/bot&lt;token&gt;/getUpdates for your chat ID.
+                </p>
+                <div class="form-group">
+                    <label for="telegramEnabled">Enable Telegram Notifications:</label>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="telegramEnabled">
+                        <span class="slider"></span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="telegramBotToken">Bot Token:</label>
+                    <input type="text" id="telegramBotToken" placeholder="123456789:ABC-DEF...">
+                </div>
+                <div class="form-group">
+                    <label for="telegramChatId">Chat ID:</label>
+                    <input type="text" id="telegramChatId" placeholder="123456789">
+                </div>
+                <div class="save-status" id="settingsSaveStatus" style="display:none;"></div>
+                <button class="btn btn-success" id="saveSettingsBtn" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+    <script>
+      /* Stale-script guard: a phone that kept an older script.js/style.css in its
+         cache (while this page is newer) had buttons that silently did nothing.
+         Refetch both once, then reload; if still stale, say how to fix it. */
+      (function () {
+        var want = '1.0.0';
+        if (window.ZX_GUI_VERSION === want) return;
+        var key = 'zx_gui_refetch';
+        var tried = null;
+        try { tried = sessionStorage.getItem(key); sessionStorage.setItem(key, want); } catch (e) {}
+        if (tried === want) {
+          var d = document.createElement('div');
+          d.style.cssText = 'background:#b91c1c;color:#fff;padding:10px 14px;font:14px sans-serif;text-align:center';
+          d.textContent = 'Luma pa ang naka-save na files ng page na ito. I-refresh ang page (o i-clear ang browser cache).';
+          document.body.insertBefore(d, document.body.firstChild);
+          return;
+        }
+        Promise.all(['script.js', 'style.css'].map(function (f) {
+          return fetch(f, { cache: 'reload' }).catch(function () {});
+        })).then(function () { location.reload(); });
+      })();
+    </script>
+</body>
+</html>
