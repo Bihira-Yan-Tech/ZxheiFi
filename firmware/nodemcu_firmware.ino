@@ -32,6 +32,7 @@
 #include "vendo_registry.h"
 #include "coin_slot.h"
 #include "gui_handler.h"
+#include "vendo_api.h"
 #include "network_config.h"
 #include "setup_mode.h"
 
@@ -45,6 +46,7 @@ TelegramNotifier telegramNotifier;
 VendoRegistry vendoRegistry;
 CoinSlot coinSlot;
 GUIHandler guiHandler;
+VendoAPI vendoApi;
 NetworkConfig networkConfig;
 SetupModeManager setupModeManager;
 bool inSetupMode = false;
@@ -316,6 +318,7 @@ void setupRoutes() {
   guiHandler.setCoinSlot(coinSlot);
   guiHandler.setVendoRegistry(vendoRegistry);
   guiHandler.onCoinPinsChanged = applyCoinPins;
+  vendoApi.begin(server, guiHandler, vendoRegistry, coinSlot, adminAPI, telegramNotifier);
 }
 
 void setup() {
@@ -427,6 +430,7 @@ void loop() {
 
   processCoinSlot();
   coinSlot.loop();
+  vendoApi.loop();
   updateStatusLED();
 
   delay(10);
