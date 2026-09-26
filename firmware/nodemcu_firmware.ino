@@ -292,7 +292,8 @@ void processCoinSlot() {
   digitalWrite(PIN_BUZZER, HIGH);
   delay(50);
   digitalWrite(PIN_BUZZER, LOW);
-  coinSlot.addCoin(peso);
+  vendoRegistry.addToBox(0, peso);   // the cash is in the box whatever happens to the credit
+  coinSlot.addCoin(0, peso);
 }
 
 void updateStatusLED() {
@@ -308,10 +309,12 @@ void updateStatusLED() {
 }
 
 void setupRoutes() {
-  coinSlot.begin(sessionManager, adminAPI, pppoeManager, qosManager, mikrotikApi, telegramNotifier);
+  vendoRegistry.begin();
+  coinSlot.begin(sessionManager, adminAPI, pppoeManager, qosManager, mikrotikApi, telegramNotifier, vendoRegistry);
   applyCoinPins();
   guiHandler.begin(server, sessionManager, adminAPI, pppoeManager, qosManager, mikrotikApi, telegramNotifier);
   guiHandler.setCoinSlot(coinSlot);
+  guiHandler.setVendoRegistry(vendoRegistry);
   guiHandler.onCoinPinsChanged = applyCoinPins;
 }
 

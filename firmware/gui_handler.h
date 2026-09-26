@@ -23,6 +23,8 @@
 #include "mikrotik_api.h"
 #include "telegram.h"
 #include "coin_slot.h"
+#include "vendo_registry.h"
+#include "zx_protocol.h"
 
 class GUIHandler {
 public:
@@ -40,7 +42,8 @@ public:
     // without this, X-Admin-Password would always read back empty.
     // collectHeaders() is a variadic template on this core version - each
     // header name is its own argument, not an array+count pair.
-    _server->collectHeaders("X-Admin-Username", "X-Admin-Password", "X-Client-Time");
+    // X-ZX-Sig: the sub-vendo protocol's signature (vendo_api.h).
+    _server->collectHeaders("X-Admin-Username", "X-Admin-Password", "X-Client-Time", ZX_SIG_HEADER);
 
     _server->on("/api/health", HTTP_GET, [this]() { handleHealth(); });
     _server->on("/api/branding", HTTP_GET, [this]() { handleBranding(); });
@@ -98,6 +101,18 @@ public:
 
   void setMikrotikReachable(bool reachable) { _mikrotikReachable = reachable; }
   void setCoinSlot(CoinSlot& coin) { _coin = &coin; }
+  void setVendoRegistry(VendoRegistry& vendos) { _vendos = &vendos; }
+
+  // Shared with vendo_api.h, whose admin endpoints use the same auth,
+  // CORS and JSON conventions as everything here.
+  void replyJson(int code, const JsonDocument& doc) { sendJson(code, doc); }
+  void replyError(int code, const String& message) { sendError(code, message); }
+  void replyOk() { sendOk(); }
+  AdminAccount* authAdmin(bool requireSuper = false) { return requireAdmin(requireSuper); }
+  void streamBegin() { beginStream(); }
+  void streamJsonItem(const JsonDocument& item, bool& first) { streamItem(item, first); }
+  void streamRaw(const String& text) { _server->sendContent(text); }
+  void streamEnd() { endStream(); }
   // Set by the .ino - re-attaches the coin interrupt/relay after Settings
   // > Coin Slot changes (they live in the sketch, not here).
   void (*onCoinPinsChanged)() = nullptr;
@@ -111,6 +126,7 @@ private:
   MikrotikAPI* _api = nullptr;
   TelegramNotifier* _telegram = nullptr;
   CoinSlot* _coin = nullptr;
+  VendoRegistry* _vendos = nullptr;
   bool _mikrotikReachable = false;
 
   // ---- Brute-force protection (shared by /api/login and admin auth) -----
@@ -278,10 +294,11 @@ private:
   // ---- Public endpoints -----------------------------------------------
 
   void handleHealth() {
-    DynamicJsonDocument doc(128);
+    DynamicJsonDocument doc(192);
     doc["mikrotik"] = _mikrotikReachable;
     doc["uptimeMs"] = millis();
     doc["fw"] = FIRMWARE_VERSION;
+    doc["board"] = BOARD_NAME;
     doc["freeHeap"] = ESP.getFreeHeap();
     sendJson(200, doc);
   }
@@ -303,6 +320,17 @@ private:
       o["minutes"] = r.minutes;
       o["dataMb"] = r.dataMb;
       o["validityMinutes"] = r.validityMinutes;
+    }
+    // Coin boxes the customer can pick (Main + paired sub vendos).
+    JsonArray vs = out.createNestedArray("vendos");
+    if (_vendos) {
+      for (auto& v : _vendos->all()) {
+        if (v.id && !v.hasKey) continue;
+        JsonObject o = vs.createNestedObject();
+        o["id"] = v.id;
+        o["name"] = v.name;
+        o["online"] = _vendos->isOnline(v);
+      }
     }
     sendJson(200, out);
   }
@@ -541,17 +569,21 @@ private:
     if (deserializeJson(in, _server->arg("plain"))) { sendError(400, "bad_json"); return; }
     if (_admin->isMacBlocked(in["mac"] | "")) { sendError(403, "device_blocked"); return; }
     String token = in["token"] | "";
+    int vendo = in["vendo"] | 0;
+    if (vendo < 0 || vendo > MAX_SUB_VENDOS) { sendError(404, "vendo_unknown"); return; }
     uint32_t waitSec = 0;
-    String err = _coin->start(in["mac"] | "", in["session"] | "", token, waitSec);
+    String err = _coin->start((uint8_t)vendo, in["mac"] | "", in["session"] | "", token, waitSec);
     DynamicJsonDocument out(128);
+    if (err == "vendo_unknown") { sendError(404, err); return; }
     if (err.length()) {
       out["error"] = err;
-      out["waitSec"] = waitSec;
+      if (err == "coin_slot_busy") out["waitSec"] = waitSec;
       sendJson(409, out);
       return;
     }
     out["token"] = token;
     out["timeoutSec"] = COIN_NO_COIN_TIMEOUT_MS / 1000;
+    out["vendo"] = vendo;
     sendJson(200, out);
   }
 
