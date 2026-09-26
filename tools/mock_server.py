@@ -317,6 +317,22 @@ def vendo_view(v):
     return out
 
 
+def vendo_coin(vid, peso, rid):
+    """A coin reported by sub vendo `vid` (already deduped and boxed)."""
+    coin_add(vid, peso)
+
+
+def vendo_tick():
+    """Logs a paired sub that went quiet for OFFLINE_ALERT_MS - once (the
+    firmware also sends a Telegram message)."""
+    for v in vendos.values():
+        if not v["id"] or v.get("key") is None or not v.get("lastSeen") or v.get("offlineLogged"):
+            continue
+        if mock_now() - v["lastSeen"] >= zx.OFFLINE_ALERT_MS / 1000:
+            v["offlineLogged"] = True
+            log_event("vendo_offline", v["name"])
+
+
 def clean_name(raw):
     name = str(raw if raw is not None else "").strip()
     return name if 1 <= len(name) <= 32 else None
@@ -428,6 +444,50 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return None
 
+    def _read_raw(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length) if length else b""
+
+    def _signed(self, code, payload, key):
+        """Signed reply for a sub vendo - X-ZX-Sig over the exact body."""
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header(zx.SIG_HEADER, zx.sign(key, body))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _auth_vendo(self):
+        """Signature + replay check for /api/vendo/poll|coin|config.
+        Returns (vendo, body, n), or (None, None, None) after replying."""
+        raw = self._read_raw()
+        try:
+            body = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            self._json(400, {"error": "bad_json"})
+            return None, None, None
+        vid = body.get("v")
+        v = vendos.get(vid) if is_int(vid) and vid else None
+        if not v or v.get("key") is None:
+            self._json(401, {"error": "unpaired"})
+            return None, None, None
+        if not zx.verify(v["key"], raw, self.headers.get(zx.SIG_HEADER, "")):
+            self._json(401, {"error": "bad_sig"})
+            return None, None, None
+        n = body.get("n")
+        if not is_int(n) or n < 1 or (v["lastN"] is not None and n <= v["lastN"]):
+            self._json(409, {"error": "replay"})
+            return None, None, None
+        v["lastN"] = n
+        v["lastSeen"] = mock_now()
+        if v.get("offlineLogged"):
+            v["offlineLogged"] = False
+            log_event("vendo_online", v["name"])
+        return v, body, n
+
     def _require_admin(self, require_super=False):
         ip = self.client_address[0]
         if is_locked_out(ip):
@@ -451,6 +511,7 @@ class Handler(BaseHTTPRequestHandler):
         path, qs = parsed.path, parse_qs(parsed.query)
         tick_sessions()
         coin_tick()
+        vendo_tick()
 
         if path == "/api/health":
             self._json(200, {"mikrotik": True, "uptimeMs": int(time.time() * 1000), "fw": FIRMWARE_VERSION})
@@ -598,6 +659,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         tick_sessions()
         coin_tick()
+        vendo_tick()
 
         if path == "/login":
             # Stand-in for MikroTik's own hotspot walled-garden login
@@ -902,6 +964,75 @@ class Handler(BaseHTTPRequestHandler):
             vendos[vid]["boxTotal"] += peso
             coin_add(vid, peso)
             self._json(200, {"ok": True})
+        elif path == "/api/vendo/pair":
+            t = mock_now()
+            window = zx.PAIR_FAIL_WINDOW_MS / 1000
+            pair_failures[:] = [f for f in pair_failures if t - f < window]
+            if len(pair_failures) >= zx.PAIR_FAIL_LIMIT:
+                self._json(429, {"error": "too_many_attempts"})
+                return
+            raw = self._read_raw()
+            try:
+                body = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                body = None
+            if not isinstance(body, dict):
+                self._json(400, {"error": "bad_json"})
+                return
+            mac, nonce = str(body.get("mac", "")), str(body.get("nonce", ""))
+            if not 1 <= len(mac) <= 32 or not 16 <= len(nonce) <= 64:
+                self._json(400, {"error": "bad_request"})
+                return
+            expire_pending()
+            sig = self.headers.get(zx.SIG_HEADER, "")
+            match = next((p for p in pending_pairs if zx.verify(zx.pair_key(p["code"]), raw, sig)), None)
+            if not match:
+                pair_failures.append(t)
+                self._json(401, {"error": "bad_code"})
+                return
+            pending_pairs.remove(match)
+            vid = match["targetId"] or free_vendo_id()
+            if not vid:
+                self._json(409, {"error": "vendo_limit"})
+                return
+            k0 = zx.pair_key(match["code"])
+            v = vendos.get(vid) or new_sub_vendo(vid, match["name"])
+            vendos[vid] = v
+            v.update(mac=mac, key=zx.vendo_key(k0, vid, mac, nonce), lastN=None, lastSeen=mock_now(),
+                     offlineLogged=False)
+            slots.setdefault(vid, new_slot())
+            log_event("vendo_paired", f"{v['name']} ({mac})")
+            self._signed(200, {"vendoId": vid, "name": v["name"], "nonce": nonce,
+                               "lastCoinSeq": v["lastCoinSeq"], "config": vendo_config(v)}, k0)
+        elif path == "/api/vendo/poll":
+            v, body, n = self._auth_vendo()
+            if not v:
+                return
+            s = slots[v["id"]]
+            self._signed(200, {"n": n, "relay": s["reserved"], "rid": s["rid"] if s["reserved"] else 0,
+                               "fast": s["reserved"], "cfgVer": v["cfgVer"], "name": v["name"]}, v["key"])
+        elif path == "/api/vendo/coin":
+            v, body, n = self._auth_vendo()
+            if not v:
+                return
+            seq, peso, rid = body.get("seq"), body.get("peso"), body.get("rid", 0)
+            if not (is_int(seq) and is_int(peso) and is_int(rid)) or seq < 1 or rid < 0 or not 1 <= peso <= 1000:
+                self._json(400, {"error": "bad_coin"})
+                return
+            if seq <= v["lastCoinSeq"]:
+                self._signed(200, {"n": n, "ok": True, "dup": True}, v["key"])
+                return
+            # Persisted before crediting/acking on the firmware - a reboot in
+            # between can't lose or double the coin.
+            v["lastCoinSeq"] = seq
+            v["boxTotal"] += peso
+            vendo_coin(v["id"], peso, rid)
+            self._signed(200, {"n": n, "ok": True}, v["key"])
+        elif path == "/api/vendo/config":
+            v, body, n = self._auth_vendo()
+            if not v:
+                return
+            self._signed(200, dict(vendo_config(v), n=n), v["key"])
         elif path == "/api/admin/vendos/add":
             if not self._require_admin(require_super=True):
                 return

@@ -175,7 +175,147 @@ def test_cannot_remove_main():
     check("re-pair Main -> 400", st == 400 and d.get("error") == "cannot_repair_main", f"{st} {d}")
 
 
+# ---------------------------------------------------------------- Task 5
+
+def test_pairing():
+    code, _, _ = add_code("Tindahan")
+    sub = SubSim(port=PORT)
+    st, d, ok = sub.pair(code)
+    check("pair -> 200", st == 200, f"{st} {d}")
+    check("pair reply is signed with the code's key", ok)
+    check("first sub is vendo 1", sub.vid == 1 and d.get("name") == "Tindahan", d)
+    check("pair reply carries config + lastCoinSeq",
+          d.get("config", {}).get("coinPin") == "D5" and d.get("lastCoinSeq") == 0, d)
+    v = vendo(list_vendos(), 1)
+    check("sub listed paired + online", v and v["paired"] and v["online"], v)
+    check("code consumed", list_vendos().get("pending") == [], list_vendos())
+    st, d, _ = SubSim(port=PORT, mac="AA:BB:CC:DD:EE:02").pair(code)
+    check("same code again -> 401 bad_code", st == 401 and d.get("error") == "bad_code", f"{st} {d}")
+
+
+def test_pair_wrong_code_rate_limit():
+    add_code()
+    sub = SubSim(port=PORT)
+    codes = [sub.pair("2222-3333-4444")[0] for _ in range(5)]
+    check("wrong codes -> 401", codes == [401] * 5, codes)
+    st, d, _ = sub.pair("2222-3333-4444")
+    check("6th wrong attempt -> 429", st == 429 and d.get("error") == "too_many_attempts", f"{st} {d}")
+    advance(61)
+    st, _, _ = sub.pair("2222-3333-4444")
+    check("allowed again after a minute (still wrong -> 401)", st == 401, st)
+
+
+def test_pair_expired_code():
+    code, _, _ = add_code()
+    advance(901)
+    st, d, _ = SubSim(port=PORT).pair(code)
+    check("expired code -> 401", st == 401, f"{st} {d}")
+
+
+def test_poll_auth_and_replay():
+    sub = paired_sub()
+    st, d, ok = sub.poll()
+    check("poll -> 200 signed", st == 200 and ok, f"{st} {d}")
+    check("poll echoes n, relay off", d.get("n") == sub.n and d.get("relay") is False and d.get("rid") == 0, d)
+    st, d, _ = sub.raw_post("/api/vendo/poll", {"v": sub.vid, "n": sub.next_n()}, sub.key, tamper=True)
+    check("tampered signature -> 401 bad_sig", st == 401 and d.get("error") == "bad_sig", f"{st} {d}")
+    st, d, _ = sub.raw_post("/api/vendo/poll", {"v": sub.vid, "n": 1}, sub.key)
+    check("replayed counter -> 409 replay", st == 409 and d.get("error") == "replay", f"{st} {d}")
+    st, d, _ = sub.raw_post("/api/vendo/poll", {"v": 3, "n": 99}, sub.key)
+    check("unknown vendo -> 401 unpaired", st == 401 and d.get("error") == "unpaired", f"{st} {d}")
+    advance(11)
+    check("offline after 10 s of silence", vendo(list_vendos(), 1)["online"] is False)
+    sub.poll()
+    check("online again on the next poll", vendo(list_vendos(), 1)["online"] is True)
+
+
+def test_coin_dedupe_and_box():
+    sub = paired_sub()
+    sub.drop_coin(10)
+    res = sub.flush()
+    check("coin -> ok", res and res[0][0] == 200 and res[0][1].get("ok") is True and res[0][2], res)
+    st, d, ok = sub.send_coin({"seq": 1, "peso": 10, "rid": 0})
+    check("resend of seq 1 -> dup, not credited twice", st == 200 and d.get("dup") is True and ok, f"{st} {d}")
+    check("box counted once", vendo(list_vendos(), 1)["boxTotal"] == 10, vendo(list_vendos(), 1))
+    st, d, _ = sub.send_coin({"seq": 2, "peso": 0, "rid": 0})
+    check("zero-peso coin -> 400", st == 400 and d.get("error") == "bad_coin", f"{st} {d}")
+    st, d, _ = sub.send_coin({"seq": 3, "peso": 5000, "rid": 0})
+    check("absurd coin -> 400", st == 400, f"{st} {d}")
+
+
+def test_vendo_limit():
+    for i in range(3):
+        paired_sub(f"Sub {i}", mac=f"AA:BB:CC:DD:EE:1{i}")
+    ids = [v["id"] for v in list_vendos()["vendos"]]
+    check("3 subs paired as 1..3", ids == [0, 1, 2, 3], ids)
+    _, st, d = add_code("Fourth")
+    check("4th sub -> 409 vendo_limit", st == 409 and d.get("error") == "vendo_limit" and d.get("limit") == 3,
+          f"{st} {d}")
+
+
+def test_config_push():
+    sub = paired_sub()
+    sub.poll()
+    before = sub.cfg_ver
+    st, d = admin_post("/api/admin/vendos/update",
+                       {"id": 1, "coinPin": "D6", "relayPin": "none", "pesosPerPulse": 5, "relayActiveHigh": False})
+    check("update sub pins -> 200", st == 200, f"{st} {d}")
+    sub.poll()
+    check("poll shows new cfgVer and sub fetched config",
+          sub.cfg_ver == before + 1 and sub.config.get("coinPin") == "D6" and sub.config.get("pesosPerPulse") == 5
+          and sub.config.get("relayPin") == "none" and sub.config.get("relayActiveHigh") is False, sub.config)
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "coinPin": "D3"})
+    check("boot pin refused", st == 400 and d.get("error") == "invalid_pin", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "coinPin": "D7", "relayPin": "D7"})
+    check("coin + relay same pin refused", st == 400 and d.get("error") == "coin_and_relay_same_pin", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "commissionPct": 20})
+    check("commission change -> 200, no cfgVer bump", st == 200 and d.get("cfgVer") == before + 1, f"{st} {d}")
+
+
+def test_remove_and_repair():
+    sub = paired_sub()
+    sub.drop_coin(10)
+    sub.flush()
+    st, d = admin_post("/api/admin/vendos/repair", {"id": 1})
+    check("re-pair -> new code", st == 200 and CODE_RE.match(d.get("code", "")), f"{st} {d}")
+    new_code = d.get("code", "")
+    st, d, _ = sub.poll()
+    check("old key rejected right away", st == 401, f"{st} {d}")
+    fresh = SubSim(port=PORT, mac="AA:BB:CC:DD:EE:01")
+    st, d, ok = fresh.pair(new_code)
+    check("re-paired to the same id, seq carried over", st == 200 and fresh.vid == 1 and d.get("lastCoinSeq") == 1
+          and fresh.seq == 1, f"{st} {d}")
+    check("box kept across re-pair", vendo(list_vendos(), 1)["boxTotal"] == 10)
+    st, d = admin_post("/api/admin/vendos/remove", {"id": 1})
+    check("remove -> 200", st == 200, f"{st} {d}")
+    st, d, _ = fresh.poll()
+    check("removed vendo -> 401", st == 401 and d.get("error") == "unpaired", f"{st} {d}")
+
+
+def test_offline_logged_once():
+    sub = paired_sub()
+    sub.poll()
+    advance(301)
+    request("GET", "/api/health")
+    request("GET", "/api/health")
+    st, logs = admin_get("/api/admin/logs")
+    offline = [e for e in logs if e["type"] == "vendo_offline"]
+    check("offline logged exactly once", len(offline) == 1, offline)
+    sub.poll()
+    st, logs = admin_get("/api/admin/logs")
+    check("back online logged", any(e["type"] == "vendo_online" for e in logs), [e["type"] for e in logs])
+
+
 TESTS = [
+    test_pairing,
+    test_pair_wrong_code_rate_limit,
+    test_pair_expired_code,
+    test_poll_auth_and_replay,
+    test_coin_dedupe_and_box,
+    test_vendo_limit,
+    test_config_push,
+    test_remove_and_repair,
+    test_offline_logged_once,
     test_clock_releases_unpaid_reservation,
     test_unknown_vendo_on_coin_start,
     test_default_vendo_list,
