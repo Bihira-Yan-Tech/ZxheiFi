@@ -4,6 +4,10 @@ Drafted 2026-09-26, right after v1.0.0. It's a brainstorm and a plan to
 choose from, not a commitment. Each item gets scoped with the owner
 before it's built.
 
+> **Status (2026-09-26):** Part 1 - Vendos framework + **Sub Vendo** - built on
+> branch `v2` (see [14-sub-vendo.md](14-sub-vendo.md)); awaiting hardware test.
+> Next: Charging Station, then ESP32 main unit + backup/restore.
+
 ## Buod (Tagalog)
 
 Ang v1.0.0 ay kumpleto na bilang isang **single-vendo** piso WiFi: may

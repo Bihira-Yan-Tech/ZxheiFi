@@ -12,7 +12,7 @@ other. When you change one, change the other.
 SECTIONS_TL = [
     (
         "Simula Dito",
-        "Ang ZxheiFi Setup Companion (v1.0.0) ay gamit para sa PAG-SETUP ng "
+        "Ang ZxheiFi Setup Companion (v2.0.0-dev) ay gamit para sa PAG-SETUP ng "
         "isang coin-op/voucher WiFi unit - hindi ito ang ginagamit ng customer "
         "(yun ay ang login page na nasa MikroTik). Gamit MO ito (o ng "
         "technician) para i-flash ang NodeMCU, i-configure ang MikroTik at "
@@ -47,7 +47,7 @@ SECTIONS_TL = [
         "kailangang mag-scan bago mag-flash - kusang nakukuha ang MAC habang "
         "nagfa-flash, at awtomatiko itong napupunta sa Configure MikroTik tab.\n\n"
         "• Firmware .bin - default na ang kasamang zxheifi_firmware.bin "
-        "(v1.0.0).\n\n"
+        "(v2.0.0-dev).\n\n"
         "• Flash Firmware - huwag alisin ang USB habang nagfa-flash. "
         "Magre-reboot ang NodeMCU pagkatapos. Sa normal na flash, firmware "
         "LANG ang napapalitan - naiiwan ang setup, admin accounts, vouchers, "
@@ -220,6 +220,51 @@ SECTIONS_TL = [
         "docs/11-coin-acceptor-wiring.md."
     ),
     (
+        "Sub Vendo (dagdag na coin box)",
+        "Ang Sub Vendo ay dagdag na coin box (NodeMCU + coin acceptor) sa ibang "
+        "lugar - hal. sa tindahan sa kanto - na nagbebenta ng oras para sa PAREHONG "
+        "WiFi. Kokonekta ito sa WiFi ng AP sa lugar na iyon. Ang main unit pa rin "
+        "ang bahala sa presyo, oras at sales; taga-bilang lang ng barya ang sub.\n\n"
+        "PAGKABIT (isang beses bawat box):\n"
+        "1. Admin → Vendos → '+ Add Vendo' → pangalan (hal. 'Tindahan ni Aling "
+        "Nena'). Lalabas ang pairing code (hal. K7QM-2XPA-9RTD) - 15 minuto, "
+        "isang beses lang magagamit.\n"
+        "2. Flash Firmware tab → Device type: 'Sub Vendo' → Flash.\n"
+        "3. Sa phone: kumonekta sa WiFi na \"ZxheiFi-Sub-Setup\" → ilagay ang WiFi "
+        "ng AP sa lugar na iyon at ang pairing code → Save.\n"
+        "4. Sa Admin → Vendos, dapat 🟢 online na ito.\n"
+        "5. QR → i-print ang sticker at idikit sa box. Ini-scan ito ng customer "
+        "para mapili agad ang box na iyon sa login page.\n\n"
+        "ARAW-ARAW:\n"
+        "• Makikita sa Vendos ang kita ngayon at laman ng coin box ng bawat isa.\n"
+        "• Pagkuha ng barya: pindutin ang 'Collected' - itatala kung sino, kailan "
+        "at magkano, at babalik sa ₱0 ang box.\n"
+        "• Commission (Edit): parte ng may-ari ng puwesto, hal. 20%. Makikita sa "
+        "Sales → piliin ang box, at sa 'Export per-vendo CSV'.\n"
+        "• Pins ng sub (Edit): coin pin, relay pin, HIGH/LOW, pesos per pulse - "
+        "kusang ipinapadala sa box, walang reflash.\n\n"
+        "ILAW NG SUB: dalawang kurap = hindi naka-pair · mabagal = kumokonekta · "
+        "tuloy-tuloy = online · mabilis = may naghuhulog · tatlong kurap = hindi "
+        "maipadala ang coins (tingnan ang WiFi).\n\n"
+        "LIMITASYON: kapag NodeMCU ang main unit, hanggang 3 sub vendo lang (kulang "
+        "ang memory nito). Para sa mas marami (hanggang 10) at sa mga susunod na "
+        "feature, ESP32 ang gamitin bilang main - darating sa susunod na update.\n\n"
+        "KALIGTASAN NG PERA: sarado ang coin slot ng sub kapag hindi nito maabot ang "
+        "main nang 3 segundo; ang coin na naipit habang putol ang WiFi ay itinatabi "
+        "sa box at ipinapadala pagbalik; walang coin na nabibilang nang dalawang "
+        "beses.\n\n"
+        "KAPAG MAY PROBLEMA:\n"
+        "• Hindi nagpe-pair (dalawang kurap pa rin) → mali o expired ang code: Add "
+        "Vendo ulit (o Re-pair), buksan ulit ang wizard (FLASH habang mabilis ang "
+        "kurap pagka-on) at ilagay ang bagong code.\n"
+        "• 🔴 offline sa Admin → walang WiFi ang box o hindi nito maabot ang main "
+        "(dapat nasa parehong network ang AP). Serial Monitor ng sub: 'Pairing' / "
+        "'Coin ... acknowledged'.\n"
+        "• Customer: 'That coin box is offline' → pumili ng ibang box habang "
+        "inaayos.\n"
+        "• Nawala/ninakaw ang box → Remove: hindi na ito gagana kahit kailan."
+    ),
+    (
         "Sounds",
         "Kasama na ang starter set ng sounds (sounds/ folder, na-upload kasama "
         "ng GUI):\n"
@@ -334,7 +379,7 @@ SECTIONS_TL = [
     ),
     (
         "Tungkol sa App",
-        "ZxheiFi Setup Companion v1.0.0\n\n"
+        "ZxheiFi Setup Companion v2.0.0-dev\n\n"
         "Ginawa para gawing madali ang pag-setup ng ZxheiFi coin-op/voucher "
         "WiFi. (Kung manual ang gusto mo, nasa mikrotik/*.rsc ang parehong "
         "setup - basahin ang mikrotik/import_guide.md.)\n\n"
@@ -354,7 +399,7 @@ SECTIONS_TL = [
 SECTIONS_EN = [
     (
         "Start Here",
-        "ZxheiFi Setup Companion (v1.0.0) is for SETTING UP a coin-op/voucher "
+        "ZxheiFi Setup Companion (v2.0.0-dev) is for SETTING UP a coin-op/voucher "
         "WiFi unit - it is not what customers use (they use the login page "
         "served by the MikroTik). You (or a technician) use it to flash the "
         "NodeMCU, configure the MikroTik and upload the portal.\n\n"
@@ -387,7 +432,7 @@ SECTIONS_EN = [
         "flashing is optional - the MAC is read during the flash and filled "
         "into the Configure MikroTik tab automatically.\n\n"
         "• Firmware .bin - defaults to the bundled zxheifi_firmware.bin "
-        "(v1.0.0).\n\n"
+        "(v2.0.0-dev).\n\n"
         "• Flash Firmware - don't unplug the USB while flashing. The NodeMCU "
         "reboots afterwards. A normal flash replaces ONLY the firmware - the "
         "setup, admin accounts, vouchers, sales and logs are kept.\n\n"
@@ -559,6 +604,49 @@ SECTIONS_EN = [
         "Save, no restart. Details: docs/11-coin-acceptor-wiring.md."
     ),
     (
+        "Sub Vendo (extra coin box)",
+        "A Sub Vendo is an extra coin box (NodeMCU + coin acceptor) somewhere else "
+        "- e.g. the store at the corner - that sells time for the SAME WiFi. It "
+        "joins the WiFi of the AP at its spot. The main unit still handles prices, "
+        "time and sales; the sub only counts coins.\n\n"
+        "SETUP (once per box):\n"
+        "1. Admin → Vendos → '+ Add Vendo' → a name (e.g. 'Tindahan ni Aling "
+        "Nena'). A pairing code appears (e.g. K7QM-2XPA-9RTD) - 15 minutes, one "
+        "use.\n"
+        "2. Flash Firmware tab → Device type: 'Sub Vendo' → Flash.\n"
+        "3. On a phone: join the WiFi \"ZxheiFi-Sub-Setup\" → enter the WiFi of "
+        "the AP at that spot and the pairing code → Save.\n"
+        "4. Admin → Vendos should now show it 🟢 online.\n"
+        "5. QR → print the sticker and put it on the box. Customers scan it and "
+        "the login page picks that box for them.\n\n"
+        "DAY TO DAY:\n"
+        "• Vendos shows today's income and the coin-box contents of each box.\n"
+        "• Emptying a box: press 'Collected' - it records who, when and how much, "
+        "and resets the box to ₱0.\n"
+        "• Commission (Edit): the location host's share, e.g. 20%. See Sales → pick "
+        "the box, and 'Export per-vendo CSV'.\n"
+        "• Sub pins (Edit): coin pin, relay pin, HIGH/LOW, pesos per pulse - sent "
+        "to the box automatically, no reflash.\n\n"
+        "SUB LED: double blink = not paired · slow = connecting · solid = online · "
+        "fast = someone is inserting · triple blink = coins can't be sent (check "
+        "the WiFi).\n\n"
+        "LIMITS: with a NodeMCU as the main unit, up to 3 sub vendos (its memory "
+        "is small). For more (up to 10) and upcoming features, use an ESP32 as the "
+        "main unit - coming in a later update.\n\n"
+        "MONEY SAFETY: the sub's coin slot closes when it can't reach the main unit "
+        "for 3 seconds; a coin caught while the WiFi is down is kept in the box and "
+        "sent when it's back; no coin is ever counted twice.\n\n"
+        "IF SOMETHING'S WRONG:\n"
+        "• Won't pair (still double blink) → wrong or expired code: Add Vendo "
+        "again (or Re-pair), reopen the wizard (FLASH while the LED blinks fast "
+        "after power-on) and enter the new code.\n"
+        "• 🔴 offline in Admin → the box has no WiFi or can't reach the main unit "
+        "(the AP must be on the same network). Sub Serial Monitor: 'Pairing' / "
+        "'Coin ... acknowledged'.\n"
+        "• Customer sees 'That coin box is offline' → pick another box meanwhile.\n"
+        "• Box lost or stolen → Remove: it can never be used again."
+    ),
+    (
         "Sounds",
         "A starter sound set is included (sounds/ folder, uploaded with the "
         "GUI):\n"
@@ -671,7 +759,7 @@ SECTIONS_EN = [
     ),
     (
         "About",
-        "ZxheiFi Setup Companion v1.0.0\n\n"
+        "ZxheiFi Setup Companion v2.0.0-dev\n\n"
         "Built to make setting up ZxheiFi coin-op/voucher WiFi easy. (Prefer "
         "manual? The same setup is in mikrotik/*.rsc - see "
         "mikrotik/import_guide.md.)\n\n"

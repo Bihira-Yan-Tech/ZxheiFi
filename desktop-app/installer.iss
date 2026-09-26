@@ -13,7 +13,7 @@
 
 [Setup]
 AppName={#MyAppName}
-AppVersion=1.0.0
+AppVersion=2.0.0-dev
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -26,7 +26,7 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
-VersionInfoVersion=1.0.0
+VersionInfoVersion=2.0.0
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

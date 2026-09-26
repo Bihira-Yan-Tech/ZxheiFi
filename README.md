@@ -1,4 +1,7 @@
-# ZxheiFi v1.0.0
+# ZxheiFi v2.0.0-dev
+
+> Branch `v2` - in development. The stable release is
+> [v1.0.0](https://github.com/Bihira-Yan-Tech/ZxheiFi/releases/tag/v1.0.0) on `main`.
 
 Coin-op / voucher / PPPoE WiFi ("piso WiFi") system for **MikroTik + NodeMCU
 (ESP8266)** — the "insert coin, get internet" hotspot you see at sari-sari
@@ -13,7 +16,13 @@ MikroTik and uploads the customer portal for you.
 - **Portal pages** (login, status, admin, voucher print sheet) are served by
   the MikroTik itself, so they load before the customer has internet.
 
-## Features (v1.0.0)
+## Features
+
+**New in v2: Sub Vendos** - extra coin boxes (a NodeMCU + coin acceptor at
+another spot) that sell time for the same WiFi. Pair them with a one-time code,
+print a QR sticker per box, see status / income / coin-box contents and an
+optional commission per box, and every coin travels over a signed, replay-proof,
+fail-closed protocol. See [docs/14-sub-vendo.md](docs/14-sub-vendo.md).
 
 **For customers**
 - Open WiFi with a login page: **Insert Coin** (live ₱/minutes counter,
@@ -50,11 +59,14 @@ MikroTik and uploads the customer portal for you.
 ## Repository layout
 
 ```
-firmware/        NodeMCU (ESP8266) firmware + zxheifi_firmware.bin (ready to flash)
+firmware/        Main unit firmware (NodeMCU ESP8266) + zxheifi_firmware.bin (ready to flash)
+subvendo/        Sub Vendo firmware + zxheifi_subvendo.bin (ready to flash)
+common/          zx_protocol.h - the signed main <-> sub protocol, shared by both firmwares
 mikrotik/        Customer portal (gui/) + generated RouterOS scripts (*.rsc)
 desktop-app/     Setup Companion (Python + CustomTkinter), build.py -> exe/installer
 vouchers/        Offline voucher generator
-tools/           mock_server.py (no-hardware test server) + regression_test.py
+tools/           mock_server.py (no-hardware test server), regression_test.py, vendo_test.py,
+                 sub_sim.py (simulated sub vendo), run_host_tests.py (C++ tests on the PC)
 docs/            Documentation, changelog, roadmap and the v2 masterplan
 ```
 
@@ -77,6 +89,8 @@ docs/            Documentation, changelog, roadmap and the v2 masterplan
 ```bash
 python tools/mock_server.py        # portal + fake NodeMCU API on http://localhost:8080
 python tools/regression_test.py    # API contract tests
+python tools/vendo_test.py         # sub-vendo contract tests (pairing, signatures, coins, sales)
+python tools/run_host_tests.py     # C++ protocol tests on the PC
 python desktop-app/test_configurator.py   # MikroTik configuration tests (fake router)
 python desktop-app/main.py         # run the Setup Companion from source
 python desktop-app/build.py        # build the portable exe + installer
@@ -87,7 +101,7 @@ python desktop-app/build.py        # build the portable exe + installer
 [`docs/`](docs/) — overview, hardware, MikroTik (hAP lite / hEX), flashing,
 portal customization, features, FAQ/troubleshooting, coin acceptor wiring,
 setup wizard, [changelog](docs/09-changelog.md), [roadmap](docs/10-feature-roadmap.md)
-and the [v2 masterplan](docs/13-v2-masterplan.md).
+the [v2 masterplan](docs/13-v2-masterplan.md) and [Sub Vendo](docs/14-sub-vendo.md).
 
 ## Credits
 

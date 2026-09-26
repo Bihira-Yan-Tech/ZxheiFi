@@ -1,5 +1,60 @@
 # 📝 Changelog
 
+## v2.0.0-dev - 2026-09-26 - Vendos framework + Sub Vendo (part 1 of v2)
+
+Built on branch `v2` (folder `ZxheiFi-v2`); v1.0.0 on `main` is untouched.
+Spec: `docs/superpowers/specs/2026-09-26-vendos-framework-subvendo-design.md`;
+user guide: [14-sub-vendo.md](14-sub-vendo.md).
+
+- **Sub Vendo firmware** (`subvendo/`):
+  - pairs with a one-time code and polls the main unit (2 s idle, 1 s while a
+    customer inserts);
+  - relay ON only while reserved *and* the main unit answered within 3 s
+    (fail-closed);
+  - every coin is queued in LittleFS until the main unit signs an "ok";
+  - its own Setup Wizard (`ZxheiFi-Sub-Setup`) and LED/buzzer states.
+- **Signed protocol** (`common/zx_protocol.h`, shared by both firmwares; Python
+  reference `tools/zx_protocol.py`):
+  - HMAC-SHA256 on every request and reply;
+  - keys derived from the pairing code, never transmitted;
+  - message counters (replay), coin sequence numbers (dedupe) and reservation
+    ids (a late coin reaches the customer who paid it, never the next one).
+  - Pinned to RFC 4231 + project vectors on three sides:
+    - Python;
+    - PC-compiled C++ (`tools/run_host_tests.py`, PlatformIO MinGW);
+    - on-device (`common/selftest`).
+- **Main unit:**
+  - `vendo_registry.h` (vendos, keys, box totals, collections);
+  - `vendo_api.h` (`/api/vendo/*` + `/api/admin/vendos*`);
+  - `coin_slot.h` now keeps one reservation per vendo, so two boxes can serve
+    two customers at once;
+  - sales keep a per-vendo split (`byVendo`, old days = all Main);
+  - coins nobody claims are counted as sales and logged `coin_late_unclaimed`
+    instead of vanishing;
+  - Telegram offline/online alerts per box;
+  - limit 3 sub vendos on an ESP8266 main unit (10 on ESP32, part 4).
+- **Portal:**
+  - "Coin box" picker on login/status (only when there is more than one box;
+    `?vendo=` from the QR sticker; remembered per phone; offline boxes
+    disabled);
+  - Admin **Vendos** tab (Add Vendo + pairing code, status, today, coin box,
+    commission, Collected, QR sticker, Edit pins, Re-pair, Remove,
+    Collections);
+  - Sales filter per box with host/owner split;
+  - **Export per-vendo CSV**;
+  - `vendo-sticker.html`.
+- **Setup Companion:**
+  - Flash tab **Device type** (Main unit / Sub Vendo), which bundles both
+    `.bin` files; a sub's MAC is not copied into Configure MikroTik;
+  - Guide section "Sub Vendo" in English and Tagalog.
+- **Build and tests:**
+  - in-repo PlatformIO projects (`pio run -d firmware|subvendo`);
+  - `tools/vendo_test.py` (92 checks, fresh mock per test, test clock);
+  - the test tools use `127.0.0.1`: `localhost` cost 2 s per request on
+    Windows, so `regression_test.py` went from about 3 min to about 2 s.
+- **Version:** `2.0.0-dev` everywhere. `versionAtLeast()` treats a `-dev`
+  build as older than its release.
+
 ## v1.0.0 — 2026-09-26 — First release
 
 The firmware, portal and Setup Companion now share one semantic version

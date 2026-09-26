@@ -1,80 +1,77 @@
-# Building zxheifi_firmware.bin
+# Building the firmware
 
-## Prerequisites
-1. Install Arduino IDE (or use PlatformIO)
-2. Install ESP8266 board package:
-   - In Arduino IDE: Files → Preferences → Additional Boards Manager URLs: 
-     http://arduino.esp8266.com/stable/package_esp8266com_index.json
-   - Tools → Board → Boards Manager → Install "esp8266 by ESP8266 Community"
-3. Install required libraries via Library Manager:
-   - ArduinoJson by Benoit Blanchon (v6.x)
-   - ESP8266WiFi, ESP8266WebServer, ESP8266mDNS, DNSServer, FS (all
-     built-in, bundled with the esp8266 board package - no separate
-     install needed)
+ZxheiFi has two firmwares:
 
-## Build Steps
-1. Open `firmware/nodemcu_firmware.ino` in Arduino IDE
-2. Select Board: "NodeMCU 1.0 (ESP-12E Module)"
-   - Flash Size: "4M (3M SPIFFS)"
-   - CPU Frequency: "80 MHz"
-   - Upload Speed: "115200"
-   - Port: [your COM port]
-3. `firmware/config.h` mostly does NOT need editing before compiling —
-   as of the [Setup Wizard](../docs/12-setup-wizard.md), WiFi/MikroTik/
-   admin credentials are entered on first boot from a phone/laptop
-   instead. Still worth editing before compiling: TIER pricing/limits
-   if you want different starting values, GPIO pin assignments if your
-   wiring differs, `NODEMCU_MDNS_NAME`/`SETUP_AP_SSID` if you want a
-   different device name.
-4. Click Verify (checkmark) to compile
-   - The .bin file will be generated in your sketch folder:
-     `{SketchFolder}/firmware/nodemcu_firmware.ino.bin`
-5. Rename to `zxheifi_firmware.bin` for clarity
+| Firmware | Source | Output the Setup Companion flashes |
+|---|---|---|
+| Main unit | `firmware/` | `firmware/zxheifi_firmware.bin` |
+| Sub Vendo (v2) | `subvendo/` | `subvendo/zxheifi_subvendo.bin` |
 
-## Size Verification
-After compilation, check the output window for:
+Both include the shared protocol header `common/zx_protocol.h`.
+
+You normally don't need to build anything: both `.bin` files are
+committed and bundled in the Setup Companion.
+
+## PlatformIO (recommended)
+
+```bash
+pio run -d firmware     # main unit  -> firmware/.pio/build/main_esp8266/firmware.bin
+pio run -d subvendo     # sub vendo  -> subvendo/.pio/build/sub_esp8266/firmware.bin
 ```
-Sketch uses XXX bytes (YY%) of program storage space.
+
+Copy each result over the committed `.bin` shown in the table above. Each
+folder's `platformio.ini` already sets the board (`nodemcuv2`), ArduinoJson 6
+and the `-I ../common` include path. Keep that path relative, because
+PlatformIO splits `${PROJECT_DIR}` on the spaces in this repo's path.
+
+## Tests that need no hardware
+
+```bash
+python tools/run_host_tests.py     # C++ protocol (zx_protocol.h) on the PC
+python tools/test_zx_protocol.py   # Python reference, same vectors
+python tools/vendo_test.py         # sub-vendo API contract (mock server)
+python tools/regression_test.py    # v1 API contract (mock server)
 ```
-Ensure XXX < 900,000 bytes (<900KB) — see `config.h`'s SIZE CONSTRAINTS
-section for why this was raised from an original 500KB round number
-(the real ceiling is the "4M (3M SPIFFS)" board layout's ~1,044,464-byte
-app partition).
 
-## Flashing the Binary
-Use NodeMCU-PyFlasher or ESP8266Flasher:
-1. Connect NodeMCU via USB
-2. Select COM port
-3. Firmware File: `zxheifi_firmware.bin`
-4. Flash Mode: dio
-5. Baud: 115200
-6. Erase Flash: Yes
-7. Click Flash NodeMCU
-8. Press RST button on NodeMCU after flashing
+`run_host_tests.py` needs PlatformIO's MinGW compiler, installed once with
+`pio pkg install -g -t platformio/toolchain-gccmingw32`.
 
-## Troubleshooting
-- **Compilation errors**: Ensure ArduinoJson v6.x is installed
-- **Flash failures**: Check USB cable (must support data, not just power)
-- **WiFi not connecting**: Verify SSID/password and that MikroTik AP is broadcasting
-- **No API response**: Confirm MikroTik API user/password and port 8728 accessible
+To run the same protocol vectors on a real board:
 
-## Alternative: PlatformIO
-If using PlatformIO:
-1. Copy `platformio.ini` from template (if provided) or create:
-   ```
-   [env:nodemcuv2]
-   platform = espressif8266
-   board = nodemcuv2
-   framework = arduino
-   lib_deps = 
-     ArduinoJson
-   build_flags = 
-     -D CORE_DEBUG_LEVEL=0
-   ```
-2. Run `pio run` to build
-3. Binary at `.pio/build/nodemcuv2/firmware.bin`
+```bash
+pio run -d common/selftest -t upload --upload-port COM5
+python tools/serial_watch.py COM5 --expect "SELFTEST PASSED"
+```
 
-## Notes
-- The .ino source is provided for reference and modification
-- End users should flash the pre-compiled .bin file
-- GUI files (`login.html`, etc.) must be uploaded separately to MikroTik Hotspot directory
+This replaces only the app, not the saved data. Reflash the real firmware
+afterwards.
+
+## Arduino IDE
+
+1. Install the ESP8266 board package (Boards Manager URL
+   `http://arduino.esp8266.com/stable/package_esp8266com_index.json`) and
+   ArduinoJson **6.x**.
+2. Copy `common/zx_protocol.h` into the sketch folder (`firmware/` or
+   `subvendo/`). The IDE doesn't know about `common/`.
+3. Open `firmware/nodemcu_firmware.ino` (or `subvendo/subvendo.ino`) and set
+   these options:
+   - Board: "NodeMCU 1.0 (ESP-12E Module)"
+   - Flash Size: "4MB (FS:3MB)"
+   - CPU: 80 MHz
+4. Sketch → Export compiled Binary.
+
+`firmware/config.h` normally needs no edits. WiFi, MikroTik and admin
+credentials come from the Setup Wizard, and prices, speeds and pins come from
+the admin panel.
+
+## Size budget
+
+- The main unit must stay under 900 KB (about 577 KB in 2.0.0-dev). The app
+  partition is about 1,044,464 bytes.
+- The sub vendo is about 370 KB.
+
+## Flashing
+
+Use the Setup Companion's Flash Firmware tab and choose the Device type:
+**Main unit** or **Sub Vendo**. Any esptool-based flasher also works: write
+the `.bin` at offset 0x0.

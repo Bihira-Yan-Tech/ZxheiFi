@@ -49,6 +49,14 @@ _BUNDLED_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fi
 DEFAULT_FIRMWARE = _BUNDLED_FIRMWARE if os.path.isfile(_BUNDLED_FIRMWARE) else os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "firmware", "zxheifi_firmware.bin")
 )
+# v2: the Sub Vendo firmware ships the same way (build.py bundles
+# subvendo/zxheifi_subvendo.bin under firmware/).
+_BUNDLED_SUB_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware", "zxheifi_subvendo.bin")
+DEFAULT_SUB_FIRMWARE = _BUNDLED_SUB_FIRMWARE if os.path.isfile(_BUNDLED_SUB_FIRMWARE) else os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "subvendo", "zxheifi_subvendo.bin")
+)
+DEVICE_MAIN = "Main unit"
+DEVICE_SUB = "Sub Vendo"
 # Network Settings (incl. the generated NodeMCU API password) persist
 # between runs - re-running Config with a freshly generated password would
 # silently break a NodeMCU already set up with the old one. The router's
@@ -59,7 +67,7 @@ _BUNDLED_GUI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui")
 GUI_DIR = _BUNDLED_GUI if os.path.isfile(os.path.join(_BUNDLED_GUI, "login.html")) else os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mikrotik", "gui")
 )
-APP_VERSION = "1.0.0"   # keep in step with firmware FIRMWARE_VERSION and the GUI's ZX_GUI_VERSION
+APP_VERSION = "2.0.0-dev"   # keep in step with firmware FIRMWARE_VERSION and the GUI's ZX_GUI_VERSION
 SETTINGS_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
                              "ZxheiFi", "setup-companion.json")
 
@@ -135,6 +143,21 @@ class FlashTab(ctk.CTkFrame):
         self.device_status_var = tk.StringVar(value="(select a port)")
         ctk.CTkLabel(device_row, textvariable=self.device_status_var,
                      text_color=theme.TEXT_DIM).grid(row=0, column=1, sticky="w")
+
+        # v2: which firmware this board gets. A Sub Vendo is an extra coin
+        # box - its MAC must not land in Configure MikroTik's NodeMCU MAC.
+        type_row = ctk.CTkFrame(parent, fg_color="transparent")
+        type_row.pack(fill="x", padx=16, pady=(8, 0))
+        ctk.CTkLabel(type_row, text="Device type:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.device_type = ctk.CTkSegmentedButton(type_row, values=[DEVICE_MAIN, DEVICE_SUB],
+                                                  command=self._on_device_type,
+                                                  selected_color=theme.ACCENT,
+                                                  selected_hover_color=theme.ACCENT_DARK)
+        self.device_type.set(DEVICE_MAIN)
+        self.device_type.grid(row=0, column=1, sticky="w")
+        self.device_hint_var = tk.StringVar(value=self._device_hint(DEVICE_MAIN))
+        ctk.CTkLabel(type_row, textvariable=self.device_hint_var, text_color=theme.TEXT_DIM,
+                     justify="left", anchor="w").grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         fw_row = ctk.CTkFrame(parent, fg_color="transparent")
         fw_row.pack(fill="x", padx=16, pady=8)
@@ -233,13 +256,39 @@ class FlashTab(ctk.CTkFrame):
                     return  # cancelled, or superseded by a newer scan
                 self._probe = None
                 self.scan_btn.configure(text="Scan Device")
-                if mac and self.on_device_detected:
-                    self.on_device_detected(mac, ip)
+                if mac:
+                    self._report_mac(mac, ip)
             self.after(0, finish)
 
         probe = flasher.DeviceProbe(port, on_status=on_status, on_result=on_result)
         self._probe = probe
         probe.start()
+
+    @staticmethod
+    def _device_hint(kind):
+        if kind == DEVICE_SUB:
+            return ("Sub Vendo = an extra coin box for the same WiFi. After flashing it opens the "
+                    "\"ZxheiFi-Sub-Setup\" WiFi:\nenter the WiFi of its spot and the pairing code "
+                    "from Admin > Vendos > Add Vendo.")
+        return "Main unit = the NodeMCU that runs the shop (talks to the MikroTik)."
+
+    def _is_sub(self):
+        return self.device_type.get() == DEVICE_SUB
+
+    def _on_device_type(self, kind):
+        # Swap the default .bin only if the field still holds a default -
+        # a file the operator picked with Browse... is kept.
+        if self.fw_var.get() in (DEFAULT_FIRMWARE, DEFAULT_SUB_FIRMWARE):
+            self.fw_var.set(DEFAULT_SUB_FIRMWARE if kind == DEVICE_SUB else DEFAULT_FIRMWARE)
+        self.device_hint_var.set(self._device_hint(kind))
+
+    def _report_mac(self, mac, ip):
+        """Hands a detected MAC to Configure MikroTik - main units only."""
+        if self._is_sub():
+            self._log(f"Sub Vendo MAC {mac} (not copied to Configure MikroTik - sub vendos need no router setup)")
+            return
+        if self.on_device_detected:
+            self.on_device_detected(mac, ip)
 
     def _browse_fw(self):
         path = fd.askopenfilename(title="Select firmware .bin", filetypes=[("Firmware binary", "*.bin")])
@@ -292,8 +341,7 @@ class FlashTab(ctk.CTkFrame):
 
     def _on_flash_mac(self, mac):
         self.device_status_var.set(f"MAC {mac}  (read during flash)")
-        if self.on_device_detected:
-            self.on_device_detected(mac, None)
+        self._report_mac(mac, None)
 
     def _on_flash_done(self, ok, code):
         def finish():
@@ -302,7 +350,11 @@ class FlashTab(ctk.CTkFrame):
             self.monitor_btn.configure(state="normal")
             self.progress.set(1 if ok else 0)
             self._log("=== Flash succeeded ===" if ok else f"=== Flash failed (exit {code}) ===")
-            if ok and self._flash_erased:
+            if ok and self._is_sub():
+                self._log("Sub Vendo flashed. It opens the \"ZxheiFi-Sub-Setup\" WiFi (first boot, or press "
+                          "FLASH while the blue LED blinks fast after power-on). Get the pairing code from "
+                          "Admin > Vendos > Add Vendo.")
+            elif ok and self._flash_erased:
                 self._log("Fresh start: the NodeMCU formats its storage on this first boot (a few "
                           "seconds), then opens the \"ZxheiFi-Setup\" WiFi for the Setup Wizard.")
                 self.erase_var.set(False)  # one-shot, so a later re-flash doesn't wipe it again
