@@ -1178,9 +1178,10 @@ private:
     bool first = true;
     for (uint32_t i = 0; i < _admin->salesHistoryCount(); i++) {
       DailySalesEntry& e = _admin->salesHistoryAt(i);
-      StaticJsonDocument<256> o;
+      DynamicJsonDocument o(768);
       o["dateStamp"] = e.dateStamp;
       o["coinRevenue"] = e.coinRevenue;
+      AdminAPI::writeByVendo(o.as<JsonObject>(), e.byVendo);
       o["voucherRevenue"] = e.voucherRevenue;
       o["subscriptionRevenue"] = e.subscriptionRevenue;
       o["users"] = e.users;
@@ -1188,9 +1189,10 @@ private:
       streamItem(o, first);
     }
     // Today's still-live totals, so the Sales tab can show it alongside history.
-    StaticJsonDocument<256> today;
+    DynamicJsonDocument today(768);
     today["dateStamp"] = _admin->todayDateStamp;
     today["coinRevenue"] = _admin->coinRevenueToday;
+    AdminAPI::writeByVendo(today.as<JsonObject>(), _admin->coinByVendoToday);
     today["voucherRevenue"] = _admin->voucherRevenueToday;
     today["subscriptionRevenue"] = _admin->subscriptionRevenueToday;
     today["users"] = _admin->usersToday;

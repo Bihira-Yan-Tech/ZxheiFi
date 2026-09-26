@@ -266,8 +266,7 @@ private:
       _admin->usersToday++;
     }
 
-    _admin->coinRevenueToday += _pesos;
-    _admin->saveToday();
+    _admin->addCoinRevenue(0, _pesos);
     String what = "PHP " + String(_pesos) + " = " + String(_seconds / 60) + " min";
     _admin->logEvent(extended ? "coin_extend" : "coin", code + " " + what + " (" + _mac + ")");
     _telegram->queueMessage("Coin sale: " + what + (extended ? " (top-up)" : ""));

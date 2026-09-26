@@ -149,10 +149,17 @@ struct ActivityLogEntry {
   String detail;  // free-text context, e.g. a code/username or what changed
 };
 
+// Coin pesos taken by one vendo (0 = this main unit, 1.. = sub vendos).
+struct VendoPeso {
+  uint8_t id;
+  uint32_t peso;
+};
+
 // One day's rolled-up sales totals, split by how it was paid.
 struct DailySalesEntry {
   String dateStamp; // "YYYY-MM-DD"
   float coinRevenue;
+  std::vector<VendoPeso> byVendo; // coinRevenue split per vendo (older files: empty = all Main)
   float voucherRevenue;
   float subscriptionRevenue;
   uint32_t users;
@@ -218,6 +225,7 @@ public:
   // Revenue is split by how it was collected so the Sales tab can show
   // a breakdown, not just one lump total.
   float coinRevenueToday = 0;
+  std::vector<VendoPeso> coinByVendoToday; // coinRevenueToday split per vendo
   float voucherRevenueToday = 0;
   float subscriptionRevenueToday = 0;
   uint32_t usersToday = 0;
@@ -239,6 +247,39 @@ public:
     loadActivityLog();
     loadSalesHistory();
     loadToday();
+  }
+
+  // Every coin sale goes through here so the per-vendo split can never
+  // drift from the coin total. Saved right away (a sale is money).
+  void addCoinRevenue(uint8_t vendoId, uint32_t peso) {
+    coinRevenueToday += peso;
+    bool found = false;
+    for (auto& e : coinByVendoToday) {
+      if (e.id == vendoId) { e.peso += peso; found = true; break; }
+    }
+    if (!found) coinByVendoToday.push_back({vendoId, peso});
+    saveToday();
+  }
+
+  uint32_t coinTodayFor(uint8_t vendoId) const {
+    for (auto& e : coinByVendoToday) if (e.id == vendoId) return e.peso;
+    return 0;
+  }
+
+  static void writeByVendo(JsonObject o, const std::vector<VendoPeso>& list) {
+    JsonArray arr = o.createNestedArray("byVendo");
+    for (auto& e : list) {
+      JsonObject item = arr.createNestedObject();
+      item["id"] = e.id;
+      item["peso"] = e.peso;
+    }
+  }
+
+  static void readByVendo(JsonVariantConst src, std::vector<VendoPeso>& list) {
+    list.clear();
+    for (JsonObjectConst item : src.as<JsonArrayConst>()) {
+      list.push_back({(uint8_t)(item["id"] | 0), (uint32_t)(item["peso"] | 0)});
+    }
   }
 
   float revenueToday() const {
@@ -481,11 +522,12 @@ public:
 
   void loadSalesHistory() {
     _salesHistory.clear();
-    loadJsonArray(SALES_HISTORY_FILE, 320, [this](JsonObject o) {
+    loadJsonArray(SALES_HISTORY_FILE, 1024, [this](JsonObject o) {
       if (_salesHistory.size() >= MAX_SALES_HISTORY_DAYS) _salesHistory.erase(_salesHistory.begin());
       DailySalesEntry e;
       e.dateStamp = o["dateStamp"].as<String>();
       e.coinRevenue = o["coinRevenue"] | 0.0f;
+      readByVendo(o["byVendo"], e.byVendo);
       e.voucherRevenue = o["voucherRevenue"] | 0.0f;
       e.subscriptionRevenue = o["subscriptionRevenue"] | 0.0f;
       e.users = o["users"] | 0;
@@ -495,10 +537,11 @@ public:
   }
 
   void saveSalesHistory() {
-    saveJsonArray(SALES_HISTORY_FILE, _salesHistory.size(), 320, [this](size_t i, JsonObject o) {
+    saveJsonArray(SALES_HISTORY_FILE, _salesHistory.size(), 1024, [this](size_t i, JsonObject o) {
       DailySalesEntry& e = _salesHistory[i];
       o["dateStamp"] = e.dateStamp;
       o["coinRevenue"] = e.coinRevenue;
+      writeByVendo(o, e.byVendo);
       o["voucherRevenue"] = e.voucherRevenue;
       o["subscriptionRevenue"] = e.subscriptionRevenue;
       o["users"] = e.users;
@@ -973,6 +1016,7 @@ public:
       DailySalesEntry e;
       e.dateStamp = todayDateStamp;
       e.coinRevenue = coinRevenueToday;
+      e.byVendo = coinByVendoToday;
       e.voucherRevenue = voucherRevenueToday;
       e.subscriptionRevenue = subscriptionRevenueToday;
       e.users = usersToday;
@@ -986,6 +1030,7 @@ public:
 
     todayDateStamp = currentDateStamp;
     coinRevenueToday = 0;
+    coinByVendoToday.clear();
     voucherRevenueToday = 0;
     subscriptionRevenueToday = 0;
     usersToday = 0;
@@ -997,9 +1042,10 @@ public:
   // reboot (e.g. moving the NodeMCU to its baseboard) - kept in a tiny
   // file, rewritten on every sale and on the periodic tick.
   void saveToday() {
-    DynamicJsonDocument doc(384);
+    DynamicJsonDocument doc(1024);
     doc["dateStamp"] = todayDateStamp;
     doc["coin"] = coinRevenueToday;
+    writeByVendo(doc.as<JsonObject>(), coinByVendoToday);
     doc["voucher"] = voucherRevenueToday;
     doc["subscription"] = subscriptionRevenueToday;
     doc["users"] = usersToday;
@@ -1015,12 +1061,13 @@ public:
     if (!SPIFFS.exists(TODAY_SALES_FILE)) return;
     File f = SPIFFS.open(TODAY_SALES_FILE, "r");
     if (!f) return;
-    DynamicJsonDocument doc(384);
+    DynamicJsonDocument doc(1024);
     bool bad = (bool)deserializeJson(doc, f);
     f.close();
     if (bad) return;
     todayDateStamp = doc["dateStamp"] | String("");
     coinRevenueToday = doc["coin"] | 0.0f;
+    readByVendo(doc["byVendo"], coinByVendoToday);
     voucherRevenueToday = doc["voucher"] | 0.0f;
     subscriptionRevenueToday = doc["subscription"] | 0.0f;
     usersToday = doc["users"] | 0;
