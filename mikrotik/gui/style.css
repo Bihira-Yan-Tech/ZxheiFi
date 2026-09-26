@@ -458,10 +458,11 @@ textarea#announcement { width: 100%; resize: vertical; font: inherit; padding: 1
 
 /* ---- v2: coin box picker + Vendos tab ---- */
 .vendo-picker { margin-bottom: 12px; text-align: left; }
-.vendo-picker label { display: block; font-size: 13px; color: #aaa; margin-bottom: 4px; }
 .vendo-picker select { width: 100%; }
+.vendo-picker select option { background: #0d1e33; color: #eef6fa; }
 .btn-inline { width: auto; padding: 6px 12px; font-size: 13px; margin: 2px 0; }
 .vendo-actions { white-space: nowrap; }
 .pair-code-box { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--accent); border-radius: 8px; }
 .pair-code-box code { font-size: 18px; letter-spacing: 2px; color: var(--accent); }
 .vendo-edit { margin-top: 16px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; }
+.vendo-note { color: var(--alert, #ef4b45); margin: 6px 0 0; }

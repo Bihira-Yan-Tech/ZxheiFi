@@ -25,9 +25,10 @@
 
             <!-- Hotspot Mode Form -->
             <form id="hotspotForm" class="login-form">
-                <div class="vendo-picker" id="vendoPicker" style="display:none;">
+                <div class="form-group vendo-picker" id="vendoPicker" style="display:none;">
                     <label for="vendoSelect">Coin box</label>
                     <select id="vendoSelect" onchange="onVendoChange()"></select>
+                    <p class="hint vendo-note" id="vendoNote" style="display:none;"></p>
                 </div>
                 <button type="button" class="coin-insert-prompt" id="coinInsertPrompt" onclick="onCoinInsertTap()">
                     <span class="coin-insert-icon">🪙</span>

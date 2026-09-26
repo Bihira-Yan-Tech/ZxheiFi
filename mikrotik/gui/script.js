@@ -206,6 +206,15 @@ function initVendoPicker(vendos) {
   const pick = list.find(v => String(v.id) === String(want) && v.online) || list.find(v => v.online) || list[0];
   sel.value = String(pick.id);
   box.style.display = '';
+  // Scanned a box's sticker but that box is down: say so instead of
+  // quietly switching to another box the customer isn't standing at.
+  const note = document.getElementById('vendoNote');
+  const wanted = list.find(v => String(v.id) === String(want));
+  if (note) {
+    note.textContent = wanted && !wanted.online
+      ? `"${wanted.name}" is offline right now - use another coin box, or try again in a minute.` : '';
+    note.style.display = note.textContent ? '' : 'none';
+  }
 }
 
 function onVendoChange() {

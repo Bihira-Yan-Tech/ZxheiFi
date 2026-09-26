@@ -40,6 +40,9 @@ def copy_extras(dst):
     without the app: firmware, portal pages, RouterOS scripts, docs."""
     (dst / "Firmware").mkdir(parents=True)
     shutil.copy2(ROOT / "firmware" / "zxheifi_firmware.bin", dst / "Firmware")
+    sub_bin = ROOT / "subvendo" / "zxheifi_subvendo.bin"
+    if sub_bin.is_file():   # v2+: the Sub Vendo firmware
+        shutil.copy2(sub_bin, dst / "Firmware")
     shutil.copytree(ROOT / "mikrotik" / "gui", dst / "MikroTik GUI (portal files)",
                     ignore=shutil.ignore_patterns("*.md"))
     shutil.copy2(ROOT / "mikrotik" / "gui" / "sounds" / "README.md",
@@ -64,7 +67,8 @@ TAGALOG
 
 Laman ng folder na ito:
   {exe}
-  Firmware\\zxheifi_firmware.bin          - firmware ng NodeMCU (kasama na rin sa app)
+  Firmware\\zxheifi_firmware.bin          - firmware ng main unit (kasama na rin sa app)
+  Firmware\\zxheifi_subvendo.bin          - firmware ng Sub Vendo / dagdag na coin box (v2)
   MikroTik GUI (portal files)\\           - login/status/admin pages + sounds
                                            (ina-upload ng app gamit ang "Upload GUI Files")
   MikroTik Scripts (manual setup)\\       - .rsc files kung ayaw gumamit ng app
@@ -80,7 +84,8 @@ ENGLISH
 
 What's in this folder:
   {exe}
-  Firmware\\zxheifi_firmware.bin          - NodeMCU firmware (also built into the app)
+  Firmware\\zxheifi_firmware.bin          - main unit firmware (also built into the app)
+  Firmware\\zxheifi_subvendo.bin          - Sub Vendo / extra coin box firmware (v2)
   MikroTik GUI (portal files)\\           - login/status/admin pages + sounds
                                            (the app uploads them with "Upload GUI Files")
   MikroTik Scripts (manual setup)\\       - .rsc files if you don't want to use the app
