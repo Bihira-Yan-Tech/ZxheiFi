@@ -466,3 +466,10 @@ textarea#announcement { width: 100%; resize: vertical; font: inherit; padding: 1
 .pair-code-box code { font-size: 18px; letter-spacing: 2px; color: var(--accent); }
 .vendo-edit { margin-top: 16px; padding: 14px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; }
 .vendo-note { color: var(--alert, #ef4b45); margin: 6px 0 0; }
+
+/* ---- v2: Charging Station ports in the Vendos tab ---- */
+.port-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.port-chip { font-size: 12px; padding: 2px 6px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); white-space: nowrap; }
+.port-chip.on { border-color: var(--accent); }
+.btn-mini { width: auto; padding: 1px 6px; font-size: 11px; margin: 0 0 0 4px; }
+#chargeRatesTable input { width: 100%; }

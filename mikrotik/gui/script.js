@@ -1216,7 +1216,7 @@ async function toggleSubscriber(username, active) {
 
 // ---- Sales Inventory -------------------------------------------------
 
-function dayTotal(r) { return r.coinRevenue + r.voucherRevenue + r.subscriptionRevenue; }
+function dayTotal(r) { return r.coinRevenue + r.voucherRevenue + r.subscriptionRevenue + (r.chargingRevenue || 0); }
 function sumSales(rows) { return rows.reduce((t, r) => t + dayTotal(r), 0); }
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1381,9 +1381,10 @@ function renderSales() {
         <td>₱${d.coinRevenue.toFixed(2)}</td>
         <td>₱${d.voucherRevenue.toFixed(2)}</td>
         <td>₱${d.subscriptionRevenue.toFixed(2)}</td>
+        <td>₱${(d.chargingRevenue || 0).toFixed(2)}</td>
         <td><b>₱${dayTotal(d).toFixed(2)}</b></td>
         <td>${d.users}</td>
-      </tr>`).join('') : '<tr><td colspan="6" style="color:#aaa;">No sales in this period.</td></tr>';
+      </tr>`).join('') : '<tr><td colspan="7" style="color:#aaa;">No sales in this period.</td></tr>';
   const [from, to] = salesRangeBounds();
   const period = from === to ? from : (from === '0000-00-00' ? 'all saved days' : `${from} to ${to}`);
   document.getElementById('salesSummary').textContent =
@@ -1393,13 +1394,12 @@ function renderSales() {
 function exportSalesCsv() {
   const rows = filteredSales().slice().reverse();   // oldest first in the file
   const [from, to] = salesRangeBounds();
-  const lines = ['Date,Coin,Voucher,Subscription,Total,Customers,Data Used (MB)'];
+  const lines = ['Date,Coin,Voucher,Subscription,Charging,Total,Customers,Data Used (MB)'];
   rows.forEach(d => lines.push([d.dateStamp, d.coinRevenue.toFixed(2), d.voucherRevenue.toFixed(2),
-    d.subscriptionRevenue.toFixed(2), dayTotal(d).toFixed(2), d.users,
+    d.subscriptionRevenue.toFixed(2), (d.chargingRevenue || 0).toFixed(2), dayTotal(d).toFixed(2), d.users,
     (d.dataUsedBytes / 1048576).toFixed(0)].join(',')));
-  lines.push(['TOTAL', sumSales(rows.map(d => ({ coinRevenue: d.coinRevenue, voucherRevenue: 0, subscriptionRevenue: 0 }))).toFixed(2),
-    sumSales(rows.map(d => ({ coinRevenue: 0, voucherRevenue: d.voucherRevenue, subscriptionRevenue: 0 }))).toFixed(2),
-    sumSales(rows.map(d => ({ coinRevenue: 0, voucherRevenue: 0, subscriptionRevenue: d.subscriptionRevenue }))).toFixed(2),
+  const col = key => rows.reduce((t, d) => t + (d[key] || 0), 0).toFixed(2);
+  lines.push(['TOTAL', col('coinRevenue'), col('voucherRevenue'), col('subscriptionRevenue'), col('chargingRevenue'),
     sumSales(rows).toFixed(2), rows.reduce((t, r) => t + r.users, 0), ''].join(','));
   const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -1774,6 +1774,9 @@ async function doSaveSettings() {
     telegramEnabled: document.getElementById('telegramEnabled').checked,
     telegramBotToken: document.getElementById('telegramBotToken').value.trim(),
     telegramChatId: document.getElementById('telegramChatId').value.trim(),
+    chargeRates: collectChargeRates(),
+    chargeMaxMinutes: parseInt(document.getElementById('chargeMaxMinutes').value, 10) || 0,
+    chargeLang: document.getElementById('chargeLang').value,
   };
   } catch (err) {
     setSaveStatus('error', 'Hindi na-save (page error: ' + err.message + '). I-refresh ang page at subukan ulit.');
@@ -1782,7 +1785,8 @@ async function doSaveSettings() {
   try {
     // Speed and rate profiles go in the same save so a new speed can be
     // used by a rate straight away (see handleAdminSaveSettings).
-    const problems = speedProfileProblems(payload.speedProfiles).concat(rateProfileProblems(payload.rateProfiles));
+    const problems = speedProfileProblems(payload.speedProfiles).concat(rateProfileProblems(payload.rateProfiles))
+      .concat(chargeRateProblems(payload.chargeRates, payload.chargeMaxMinutes));
     if (payload.coinPin === payload.relayPin) problems.push('Magkaiba dapat ang coin pin at relay pin.');
     if (problems.length) throw new Error('\n' + problems.join('\n'));
     const controller = new AbortController();
@@ -1847,6 +1851,10 @@ async function loadSettingsIntoForm() {
     document.getElementById('telegramEnabled').checked = !!data.telegramEnabled;
     document.getElementById('telegramBotToken').value = data.telegramBotToken || '';
     document.getElementById('telegramChatId').value = data.telegramChatId || '';
+    document.getElementById('chargeRatesBody').innerHTML = '';
+    (data.chargeRates || []).forEach(r => addChargeRateRow(r));
+    document.getElementById('chargeMaxMinutes').value = data.chargeMaxMinutes || 180;
+    document.getElementById('chargeLang').value = data.chargeLang === 'en' ? 'en' : 'tl';
     loadRateProfilesIntoTable();
     loadBlockedList();
   } catch (err) {
@@ -2000,6 +2008,11 @@ const VENDO_ERRORS = {
   bad_commission: 'Commission must be 0-100%.',
   cannot_remove_main: 'The main unit cannot be removed.',
   vendo_unknown: 'That coin box no longer exists - reload the tab.',
+  bad_type: 'Choose a type: WiFi coin box or Charging Station.',
+  bad_ports: 'Ports must be 1-4.',
+  bad_port: 'That port does not exist on this box.',
+  not_charging: 'Only Charging Stations have ports to stop.',
+  bad_relay_level: 'Choose HIGH or LOW.',
 };
 
 function vendoError(d) {
@@ -2033,10 +2046,11 @@ async function loadVendos() {
     addBtn.disabled = subs >= data.limit;
     addBtn.title = addBtn.disabled ? 'Limit reached for this board' : '';
     tbody.innerHTML = data.vendos.map(v => {
-      const actions = [
-        `<button class="btn btn-secondary btn-inline" onclick="collectVendo(${v.id})">Collected</button>`,
-        `<button class="btn btn-secondary btn-inline" onclick="openVendoSticker(${v.id})">QR</button>`,
-      ];
+      const charging = v.type === 'charging';
+      const actions = [`<button class="btn btn-secondary btn-inline" onclick="collectVendo(${v.id})">Collected</button>`];
+      if (!charging) {
+        actions.push(`<button class="btn btn-secondary btn-inline" onclick="openVendoSticker(${v.id})">QR</button>`);
+      }
       if (isSuper) {
         actions.push(`<button class="btn btn-secondary btn-inline" onclick="editVendo(${v.id})">Edit</button>`);
         if (v.id !== 0) {
@@ -2044,7 +2058,8 @@ async function loadVendos() {
           actions.push(`<button class="btn btn-danger btn-inline" onclick="removeVendo(${v.id})">Remove</button>`);
         }
       }
-      return `<tr><td>${escHtml(v.name)}</td><td>${vendoStatus(v)}</td><td>₱${v.todayPeso}</td>
+      const label = charging ? '<br><span class="hint">Charging Station</span>' : '';
+      return `<tr><td>${escHtml(v.name)}${label}</td><td>${vendoStatus(v)}${charging ? chargingPorts(v) : ''}</td><td>₱${v.todayPeso}</td>
         <td>₱${v.boxTotal}</td><td>${v.commissionPct}%</td><td class="vendo-actions">${actions.join(' ')}</td></tr>`;
     }).join('');
     document.getElementById('vendoPending').innerHTML = data.pending.map(p => `
@@ -2069,16 +2084,57 @@ async function postVendo(path, body) {
   return data;
 }
 
-async function addVendo() {
-  const name = (prompt('Name of the new coin box (e.g. "Tindahan ni Aling Nena"):') || '').trim();
-  if (!name) return;
-  const data = await postVendo('/api/admin/vendos/add', { name });
+function showAddVendo() {
+  document.getElementById('vendoAddName').value = '';
+  document.getElementById('vendoAddType').value = 'wifi';
+  document.getElementById('vendoAddForm').style.display = '';
+  document.getElementById('vendoAddName').focus();
+}
+
+function hideAddVendo() {
+  document.getElementById('vendoAddForm').style.display = 'none';
+}
+
+async function createVendo() {
+  const name = document.getElementById('vendoAddName').value.trim();
+  const type = document.getElementById('vendoAddType').value;
+  if (!name) {
+    alert(VENDO_ERRORS.bad_name);
+    return;
+  }
+  const data = await postVendo('/api/admin/vendos/add', { name, type });
   if (!data) return;
+  hideAddVendo();
+  const charging = type === 'charging';
   alert(`Pairing code for "${name}":\n\n${data.code}\n\nValid for 15 minutes, one use.\n` +
-        '1. Flash the box with the Setup Companion (Device type: Sub Vendo).\n' +
-        '2. On a phone, join the WiFi "ZxheiFi-Sub-Setup".\n' +
+        `1. Flash the box with the Setup Companion (Device type: ${charging ? 'Charging Station' : 'Sub Vendo'}).\n` +
+        `2. On a phone, join the WiFi "${charging ? 'ZxheiFi-Charge-Setup' : 'ZxheiFi-Sub-Setup'}".\n` +
         '3. Enter the WiFi of this spot and this code, then Save.');
   loadVendos();
+}
+
+function fmtPortTime(secs) {
+  if (!secs) return 'libre';
+  const h = Math.floor(secs / 3600), m = Math.round((secs % 3600) / 60);
+  return h ? `${h}h${String(m).padStart(2, '0')}m` : `${Math.max(1, m)}m`;
+}
+
+// "P1 libre · P2 23m" plus a Stop button per running port (charging boxes).
+function chargingPorts(v) {
+  const secs = v.portSecs || [];
+  const stale = v.portSecsAgoSec < 0 || v.portSecsAgoSec > 30;
+  return `<div class="port-chips">${secs.map((s, i) => `<span class="port-chip${s ? ' on' : ''}">P${i + 1} ${fmtPortTime(s)}` +
+    (s ? ` <button class="btn btn-danger btn-mini" onclick="stopPort(${v.id}, ${i + 1})">Stop</button>` : '') +
+    '</span>').join('')}${stale && v.paired ? ' <span class="hint">(last report may be old)</span>' : ''}</div>`;
+}
+
+async function stopPort(id, port) {
+  const v = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (!v || !confirm(`Stop port ${port} of "${v.name}"?\nIts remaining time is lost (it's logged, so you can refund).`)) return;
+  if (await postVendo('/api/admin/vendos/stop', { id, port })) {
+    alert('Stop sent - the box applies it within a few seconds.');
+    loadVendos();
+  }
 }
 
 async function collectVendo(id) {
@@ -2106,6 +2162,18 @@ function editVendo(id) {
   document.getElementById('vendoEditName').value = v.name;
   document.getElementById('vendoEditCommission').value = v.commissionPct;
   document.getElementById('vendoEditPins').style.display = id === 0 ? 'none' : '';
+  const charging = v.type === 'charging';
+  document.getElementById('vendoEditCharging').style.display = charging ? '' : 'none';
+  // D1/D2 are a Charging Station's I2C bus
+  ['vendoEditCoinPin', 'vendoEditRelayPin'].forEach(sel => {
+    [...document.getElementById(sel).options].forEach(o => {
+      o.disabled = charging && (o.value === 'D1' || o.value === 'D2');
+    });
+  });
+  if (charging) {
+    document.getElementById('vendoEditPorts').value = String(v.ports || 4);
+    document.getElementById('vendoEditPortHigh').value = v.portActiveHigh ? 'high' : 'low';
+  }
   document.getElementById('vendoEditMainNote').style.display = id === 0 ? '' : 'none';
   if (id !== 0) {
     document.getElementById('vendoEditCoinPin').value = v.coinPin;
@@ -2134,6 +2202,11 @@ async function saveVendoEdit() {
     body.relayPin = document.getElementById('vendoEditRelayPin').value;
     body.relayActiveHigh = document.getElementById('vendoEditRelayHigh').value === 'high';
     body.pesosPerPulse = parseInt(document.getElementById('vendoEditPulse').value, 10) || 0;
+  }
+  const edited = vendoCache && vendoCache.vendos.find(x => x.id === id);
+  if (edited && edited.type === 'charging') {
+    body.ports = parseInt(document.getElementById('vendoEditPorts').value, 10);
+    body.portActiveHigh = document.getElementById('vendoEditPortHigh').value === 'high';
   }
   if (await postVendo('/api/admin/vendos/update', body)) {
     closeVendoEdit();
@@ -2172,4 +2245,34 @@ async function loadCollections() {
   } catch (err) {
     console.error('Collections load failed', err);
   }
+}
+
+// ---- Settings > Charging (v2) -------------------------------------------
+function addChargeRateRow(r) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input type="number" class="charge-peso" min="1" max="1000" step="1" value="${r ? r.peso : ''}"></td>
+    <td><input type="number" class="charge-minutes" min="1" max="1440" step="1" value="${r ? r.minutes : ''}"></td>
+    <td><button type="button" class="btn btn-danger btn-inline" onclick="this.closest('tr').remove()">Remove</button></td>`;
+  document.getElementById('chargeRatesBody').appendChild(tr);
+}
+
+function collectChargeRates() {
+  return [...document.querySelectorAll('#chargeRatesBody tr')].map(tr => ({
+    peso: parseInt(tr.querySelector('.charge-peso').value, 10) || 0,
+    minutes: parseInt(tr.querySelector('.charge-minutes').value, 10) || 0,
+  })).filter(r => r.peso || r.minutes);
+}
+
+function chargeRateProblems(rates, maxMinutes) {
+  const problems = [];
+  const seen = new Set();
+  if (rates.length > 10) problems.push('Charging: up to 10 prices.');
+  rates.forEach(r => {
+    if (r.peso < 1 || r.peso > 1000) problems.push(`Charging: ₱${r.peso} - price must be 1-1000.`);
+    if (r.minutes < 1 || r.minutes > 1440) problems.push(`Charging: ₱${r.peso} - minutes must be 1-1440.`);
+    if (seen.has(r.peso)) problems.push(`Charging: ₱${r.peso} is listed twice.`);
+    seen.add(r.peso);
+  });
+  if (maxMinutes < 10 || maxMinutes > 1440) problems.push('Charging: max time per port must be 10-1440 minutes.');
+  return problems;
 }

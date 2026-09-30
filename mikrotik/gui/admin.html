@@ -212,6 +212,7 @@
                                 <th>Coin</th>
                                 <th>Voucher</th>
                                 <th>Subscription</th>
+                                <th>Charging</th>
                                 <th>Total</th>
                                 <th>Users</th>
                             </tr>
@@ -238,7 +239,23 @@
             <div id="vendos" class="tab-content" style="display:none;">
                 <h2>Vendos (coin boxes)</h2>
                 <p class="hint" id="vendoLimitNote"></p>
-                <button class="btn btn-primary btn-inline" id="addVendoBtn" onclick="addVendo()">+ Add Vendo</button>
+                <button class="btn btn-primary btn-inline" id="addVendoBtn" onclick="showAddVendo()">+ Add Vendo</button>
+                <div class="vendo-edit" id="vendoAddForm" style="display:none;">
+                    <h3>New coin box</h3>
+                    <div class="form-group">
+                        <label for="vendoAddName">Name</label>
+                        <input type="text" id="vendoAddName" maxlength="32" placeholder="e.g. Tindahan ni Aling Nena">
+                    </div>
+                    <div class="form-group">
+                        <label for="vendoAddType">Type</label>
+                        <select id="vendoAddType">
+                            <option value="wifi">WiFi coin box (Sub Vendo - sells hotspot time)</option>
+                            <option value="charging">Charging Station (coin-op phone charging)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary btn-inline" onclick="createVendo()">Create + get pairing code</button>
+                    <button class="btn btn-secondary btn-inline" onclick="hideAddVendo()">Cancel</button>
+                </div>
                 <div id="vendoPending"></div>
                 <div class="table-container" style="margin-top:12px;">
                     <table id="vendosTable">
@@ -292,6 +309,21 @@
                             <label for="vendoEditPulse">Pesos per pulse</label>
                             <input type="number" id="vendoEditPulse" min="1" max="100" step="1">
                         </div>
+                    </div>
+                    <div id="vendoEditCharging" style="display:none;">
+                        <div class="form-group">
+                            <label for="vendoEditPorts">Charging ports on this box</label>
+                            <select id="vendoEditPorts"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="vendoEditPortHigh">Port relays switch on when the pin is</label>
+                            <select id="vendoEditPortHigh">
+                                <option value="low">LOW (most relay modules)</option>
+                                <option value="high">HIGH</option>
+                            </select>
+                        </div>
+                        <p class="hint">A Charging Station's D1/D2 pins are its I2C bus (expander + screen), so the coin and
+                            relay pins must be D5, D6 or D7.</p>
                     </div>
                     <button class="btn btn-primary btn-inline" onclick="saveVendoEdit()">Save</button>
                     <button class="btn btn-secondary btn-inline" onclick="closeVendoEdit()">Cancel</button>
@@ -519,6 +551,31 @@
                     <b>click.mp3</b> (button taps), <b>background-music.mp3</b> (login page music).
                     Any missing file is simply silent.
                 </p>
+
+                <h2 style="margin-top:24px;">Charging</h2>
+                <p class="hint">
+                    Prices for Charging Stations (Admin &gt; Vendos). Each coin gets its exact price's minutes; a coin
+                    with no exact price is worked out from the cheapest price, so no coin is wasted.
+                    Changes are sent to every Charging Station automatically.
+                </p>
+                <div class="table-container">
+                    <table id="chargeRatesTable">
+                        <thead><tr><th>Price (₱)</th><th>Minutes</th><th></th></tr></thead>
+                        <tbody id="chargeRatesBody"></tbody>
+                    </table>
+                </div>
+                <button type="button" class="btn btn-secondary btn-inline" onclick="addChargeRateRow()">+ Add price</button>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="chargeMaxMinutes">Max time per port (minutes)</label>
+                    <input type="number" id="chargeMaxMinutes" min="10" max="1440" step="1">
+                </div>
+                <div class="form-group">
+                    <label for="chargeLang">Screen language on the boxes</label>
+                    <select id="chargeLang">
+                        <option value="tl">Tagalog</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
 
                 <h2 style="margin-top:24px;">Telegram Notifications</h2>
                 <p style="font-size:13px;color:#aaa;margin-bottom:12px;">
