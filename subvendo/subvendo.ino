@@ -19,28 +19,36 @@
  *      solid = online, fast blink = customer inserting, triple = queue
  *      nearly full (check the WiFi). Buzzer: 1 beep per coin, a chirp
  *      when a customer's window opens, 3 beeps when paired.
- * Setup: see sub_setup.h. Wiring: same pins as the main unit
+ * Setup + link + storage: common/box/. Wiring: same pins as the main unit
  * (coin D5, relay D7, buzzer D8) - changeable from Admin > Vendos.
  */
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266HTTPClient.h>
+#include <DNSServer.h>   // used by common/box/ (listed here so PlatformIO links it)
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include "zx_protocol.h"
+#include "box/box_config.h"
+#include "box/box_store.h"
+#include "box/record_queue.h"
+#include "box/box_setup.h"
+#include "box/box_link.h"
 #include "sub_config.h"
-#include "sub_store.h"
-#include "coin_queue.h"
-#include "sub_setup.h"
 
-SubState state;
-CoinQueue coinQueue;
+BoxState state;
+BoxLink link(state);
+RecordQueue coinQueue(SUB_QUEUE_FILE, SUB_QUEUE_CAPACITY);
 ESP8266WebServer server(80);
-SubSetup setupWizard;
+BoxSetup setupWizard(SUB_SETUP_AP_SSID, "ZxheiFi Sub Vendo", SUB_FIRMWARE_VERSION);
 bool inSetup = false;
 
-uint32_t counter = 0;           // last message counter used
+// Pins + pulse value, from the main unit's config (Admin > Vendos > Edit)
+String coinPin = "D5", relayPin = "D7";
+bool relayActiveHigh = true;
+uint16_t pesosPerPulse = 1;
+
 bool relayOn = false;
 bool pollRelay = false;         // main unit says a customer reserved this box
 bool pollFast = false;
@@ -72,92 +80,56 @@ void beep(uint8_t times) {
 
 void setRelay(bool on) {
   relayOn = on;
-  if (relayGpio >= 0) digitalWrite(relayGpio, (on == state.relayActiveHigh) ? HIGH : LOW);
+  if (relayGpio >= 0) digitalWrite(relayGpio, (on == relayActiveHigh) ? HIGH : LOW);
+}
+
+// Reads this box's pins from the main unit's last config.
+void readConfig() {
+  DynamicJsonDocument c(1024);
+  if (deserializeJson(c, state.configJson)) return;
+  String coin = c["coinPin"] | coinPin;
+  String relay = c["relayPin"] | relayPin;
+  if (boxPinGpio(coin) >= 0) coinPin = coin;
+  if (relay == "none" || boxPinGpio(relay) >= 0) relayPin = relay;
+  relayActiveHigh = c["relayActiveHigh"] | relayActiveHigh;
+  uint16_t pulse = c["pesosPerPulse"] | pesosPerPulse;
+  if (pulse >= 1 && pulse <= 100) pesosPerPulse = pulse;
 }
 
 void applyPins() {
+  readConfig();
   if (coinGpio >= 0) detachInterrupt(digitalPinToInterrupt(coinGpio));
   if (relayGpio >= 0) pinMode(relayGpio, INPUT);
-  coinGpio = subPinGpio(state.coinPin);
-  if (coinGpio < 0) coinGpio = subPinGpio("D5");
-  relayGpio = state.relayPin == "none" ? -1 : subPinGpio(state.relayPin);
+  coinGpio = boxPinGpio(coinPin);
+  if (coinGpio < 0) coinGpio = boxPinGpio("D5");
+  relayGpio = relayPin == "none" ? -1 : boxPinGpio(relayPin);
   if (relayGpio == coinGpio) relayGpio = -1;
   if (relayGpio >= 0) pinMode(relayGpio, OUTPUT);
   setRelay(false);
   pinMode(coinGpio, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(coinGpio), onPulse, FALLING);
-  Serial.printf("Pins: coin %s, relay %s (%s), PHP %u per pulse\n", state.coinPin.c_str(), state.relayPin.c_str(),
-                state.relayActiveHigh ? "HIGH" : "LOW", state.pesosPerPulse);
-}
-
-uint32_t nextCounter() {
-  counter++;
-  if (counter >= state.counterBase) {        // reserve the next block before using it
-    state.counterBase = counter + SUB_COUNTER_BLOCK;
-    state.save();
-  }
-  return counter;
-}
-
-// Signed POST to the main unit. Returns the HTTP status, 0 when a 200
-// reply fails its signature check, or <0 on a transport error.
-int postSigned(const char* path, const JsonDocument& payload, const uint8_t key[32], JsonDocument& resp) {
-  String body;
-  serializeJson(payload, body);
-  WiFiClient client;
-  HTTPClient http;
-  http.setTimeout(SUB_HTTP_TIMEOUT_MS);
-  if (!http.begin(client, "http://" + state.mainHost + path)) return -1;
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader(ZX_SIG_HEADER, zx::sign(key, body));
-  const char* headers[] = {ZX_SIG_HEADER};
-  http.collectHeaders(headers, 1);
-  int code = http.POST(body);
-  String text = code > 0 ? http.getString() : String();
-  String sig = http.header(ZX_SIG_HEADER);
-  http.end();
-  if (code != 200) return code;
-  if (!zx::verify(key, text, sig)) return 0;
-  if (deserializeJson(resp, text)) return 0;
-  return 200;
+  Serial.printf("Pins: coin %s, relay %s (%s), PHP %u per pulse\n", coinPin.c_str(), relayPin.c_str(),
+                relayActiveHigh ? "HIGH" : "LOW", pesosPerPulse);
 }
 
 void tryPair() {
   lastPairTryMs = millis();
-  uint8_t k0[32];
-  zx::pairKey(state.pairCode, k0);
-  char nonce[17];
-  for (int i = 0; i < 8; i++) snprintf(nonce + 2 * i, 3, "%02x", (unsigned)(RANDOM_REG32 & 0xFF));
-  StaticJsonDocument<128> req;
-  req["mac"] = WiFi.macAddress();
-  req["nonce"] = nonce;
-  DynamicJsonDocument resp(512);
-  int code = postSigned("/api/vendo/pair", req, k0, resp);
-  if (code != 200 || String((const char*)(resp["nonce"] | "")) != nonce) {
-    Serial.printf("Pairing: no (HTTP %d) - check the code in Admin > Vendos; retrying\n", code);
-    return;
-  }
-  uint8_t id = resp["vendoId"] | 0;
-  if (!id) return;
-  state.vendoId = id;
-  zx::vendoKey(k0, id, WiFi.macAddress(), String(nonce), state.key);
-  state.pairCode = "";
-  state.applyConfig(resp["config"]);
-  state.save();
+  DynamicJsonDocument resp(768);
+  if (!link.pair(resp)) return;
   coinQueue.raiseSeq(resp["lastCoinSeq"] | 0UL);
   keyRejected = false;
   applyPins();
-  Serial.printf("Paired as vendo %u (%s)\n", id, state.name.c_str());
   beep(3);
 }
 
 void fetchConfig() {
   StaticJsonDocument<64> req;
-  uint32_t n = nextCounter();
+  uint32_t n = link.nextCounter();
   req["v"] = state.vendoId;
   req["n"] = n;
-  DynamicJsonDocument resp(384);
-  if (postSigned("/api/vendo/config", req, state.key, resp) != 200 || (resp["n"] | 0UL) != n) return;
+  DynamicJsonDocument resp(768);
+  if (link.postSigned("/api/vendo/config", req, state.key, resp) != 200 || (resp["n"] | 0UL) != n) return;
+  resp.remove("n");
   state.applyConfig(resp.as<JsonVariantConst>());
   state.save();
   applyPins();
@@ -166,11 +138,11 @@ void fetchConfig() {
 void pollMain() {
   lastPollTryMs = millis();
   StaticJsonDocument<64> req;
-  uint32_t n = nextCounter();
+  uint32_t n = link.nextCounter();
   req["v"] = state.vendoId;
   req["n"] = n;
   DynamicJsonDocument resp(384);
-  int code = postSigned("/api/vendo/poll", req, state.key, resp);
+  int code = link.postSigned("/api/vendo/poll", req, state.key, resp);
   if (code == 401) {
     if (!keyRejected) Serial.println("Main unit no longer knows this box - re-pair it (Admin > Vendos)");
     keyRejected = true;
@@ -183,22 +155,22 @@ void pollMain() {
   pollRelay = resp["relay"] | false;
   currentRid = pollRelay ? (uint32_t)(resp["rid"] | 0UL) : 0;
   pollFast = resp["fast"] | false;
-  if ((uint16_t)(resp["cfgVer"] | 0) != state.cfgVer) fetchConfig();
+  if ((uint32_t)(resp["cfgVer"] | 0UL) != state.cfgVer) fetchConfig();
   if (pollRelay && !wasReserved) beep(1);   // "insert your coins"
 }
 
 void sendNextCoin() {
   lastCoinSendMs = millis();
-  const QueuedCoin c = coinQueue.front();
+  const BoxRecord c = coinQueue.front();
   StaticJsonDocument<160> req;
-  uint32_t n = nextCounter();
+  uint32_t n = link.nextCounter();
   req["v"] = state.vendoId;
   req["n"] = n;
   req["seq"] = c.seq;
   req["peso"] = c.peso;
   req["rid"] = c.rid;
   StaticJsonDocument<128> resp;
-  int code = postSigned("/api/vendo/coin", req, state.key, resp);
+  int code = link.postSigned("/api/vendo/coin", req, state.key, resp);
   if (code == 401) {
     keyRejected = true;
     coinSendFailed = true;
@@ -225,7 +197,7 @@ void processPulses() {
     Serial.printf("Ignoring implausible burst of %u pulses - check the wiring/acceptor\n", pulses);
     return;
   }
-  uint32_t peso = pulses * state.pesosPerPulse;
+  uint32_t peso = pulses * pesosPerPulse;
   if (!coinQueue.push(peso, rid)) {
     Serial.printf("COIN QUEUE FULL - PHP %u NOT RECORDED (main unit unreachable?)\n", peso);
     beep(4);
@@ -242,7 +214,7 @@ void updateLed(bool wifiUp, bool linkOk) {
   if (!state.paired() || keyRejected) {
     uint32_t p = t % 1500;
     on = p < 100 || (p >= 250 && p < 350);                              // double blink
-  } else if (coinQueue.size() + SUB_QUEUE_HEADROOM >= ZX_COIN_QUEUE_MAX) {
+  } else if (coinQueue.size() + SUB_QUEUE_HEADROOM >= coinQueue.capacity()) {
     uint32_t p = t % 1500;
     on = p < 100 || (p >= 250 && p < 350) || (p >= 500 && p < 600);     // triple blink
   } else if (!wifiUp || !linkOk) {
@@ -269,11 +241,9 @@ void setup() {
   }
   state.load();
   coinQueue.load();
-  counter = state.counterBase;                      // never reuse a counter from before the reboot
-  state.counterBase = counter + SUB_COUNTER_BLOCK;
-  state.save();
+  link.begin();
 
-  if (!state.configured() || SubSetup::buttonPressedInWindow()) {
+  if (!state.configured() || BoxSetup::buttonPressedInWindow()) {
     inSetup = true;
     setupWizard.begin(server, state);
     return;
@@ -298,9 +268,9 @@ void loop() {
   bool wifiUp = WiFi.status() == WL_CONNECTED;
   if (wifiUp) {
     if (!state.paired()) {
-      if (state.pairCode.length() && millis() - lastPairTryMs >= SUB_PAIR_RETRY_MS) tryPair();
+      if (state.pairCode.length() && millis() - lastPairTryMs >= BOX_PAIR_RETRY_MS) tryPair();
     } else {
-      uint32_t every = keyRejected ? SUB_REJECTED_POLL_MS : (pollFast ? ZX_POLL_ACTIVE_MS : ZX_POLL_IDLE_MS);
+      uint32_t every = keyRejected ? BOX_REJECTED_POLL_MS : (pollFast ? ZX_POLL_ACTIVE_MS : ZX_POLL_IDLE_MS);
       if (millis() - lastPollTryMs >= every) pollMain();
       if (!coinQueue.empty() && !keyRejected &&
           (!coinSendFailed || millis() - lastCoinSendMs >= ZX_COIN_RESEND_MS)) {
@@ -312,7 +282,7 @@ void loop() {
   // Fail-closed: the acceptor only takes coins while a customer holds
   // this box AND the main unit answered within the last 3 seconds.
   bool linkOk = state.paired() && !keyRejected && lastPollOkMs && millis() - lastPollOkMs < ZX_SUB_FAILCLOSED_MS;
-  bool want = linkOk && pollRelay && coinQueue.size() + SUB_QUEUE_HEADROOM < ZX_COIN_QUEUE_MAX;
+  bool want = linkOk && pollRelay && coinQueue.size() + SUB_QUEUE_HEADROOM < coinQueue.capacity();
   if (want != relayOn) setRelay(want);
   if (!linkOk && pollRelay && lastPollOkMs && millis() - lastPollOkMs >= ZX_SUB_FAILCLOSED_MS) {
     pollRelay = false;          // stale reservation - wait for a fresh poll

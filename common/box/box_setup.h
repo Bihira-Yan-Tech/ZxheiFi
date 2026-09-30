@@ -1,27 +1,29 @@
 /*
- * sub_setup.h - Sub Vendo Setup Wizard (phone, captive portal)
- * ZXHEIFI Sub Vendo firmware (v2)
+ * box_setup.h - a box's Setup Wizard (phone, captive portal)
  *
- * Opens when the sub has no WiFi saved yet, or when the FLASH button is
+ * Opens when the box has no WiFi saved yet, or when the FLASH button is
  * pressed while the blue LED blinks fast right after power-on. Broadcasts
- * "ZxheiFi-Sub-Setup"; every web address shows the form. It asks for the
- * WiFi of the AP at this spot, the main unit's address and the pairing
- * code from Admin > Vendos > Add Vendo (leave it blank to keep an
- * existing pairing, e.g. when only the WiFi changed).
+ * its own AP (e.g. "ZxheiFi-Sub-Setup"); every web address shows the
+ * form. It asks for the WiFi of the AP at this spot, the main unit's
+ * address and the pairing code from Admin > Vendos > Add Vendo (leave it
+ * blank to keep an existing pairing, e.g. when only the WiFi changed).
  */
-#ifndef SUB_SETUP_H
-#define SUB_SETUP_H
+#ifndef BOX_SETUP_H
+#define BOX_SETUP_H
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <DNSServer.h>
-#include "sub_config.h"
-#include "sub_store.h"
-#include "zx_protocol.h"
+#include "box_config.h"
+#include "box_store.h"
+#include "../zx_protocol.h"
 
-class SubSetup {
+class BoxSetup {
 public:
+  BoxSetup(const char* apSsid, const char* title, const char* firmwareVersion)
+      : _apSsid(apSsid), _title(title), _version(firmwareVersion) {}
+
   // FLASH pressed during the fast-blink window after boot. (GPIO0 held at
   // power-on would start the ROM flasher instead - hence the window.)
   static bool buttonPressedInWindow() {
@@ -41,21 +43,21 @@ public:
     return false;
   }
 
-  void begin(ESP8266WebServer& server, SubState& state) {
+  void begin(ESP8266WebServer& server, BoxState& state) {
     _server = &server;
     _state = &state;
     IPAddress apIP(192, 168, 4, 1);
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    WiFi.softAP(SUB_SETUP_AP_SSID);
+    WiFi.softAP(_apSsid);
     _dns.start(53, "*", apIP);
     _server->on("/", HTTP_GET, [this]() { handleForm(""); });
     _server->on("/save", HTTP_POST, [this]() { handleSave(); });
     _server->onNotFound([this]() { handleForm(""); });
     _server->begin();
     digitalWrite(PIN_LED_STATUS, LOW);   // solid while the wizard is open
-    Serial.printf("=== SUB VENDO SETUP ===\nConnect to WiFi \"%s\" and open any website (or http://192.168.4.1)\n",
-                  SUB_SETUP_AP_SSID);
+    Serial.printf("=== %s SETUP ===\nConnect to WiFi \"%s\" and open any website (or http://192.168.4.1)\n",
+                  _title, _apSsid);
   }
 
   void loop() {
@@ -64,8 +66,11 @@ public:
   }
 
 private:
+  const char* _apSsid;
+  const char* _title;
+  const char* _version;
   ESP8266WebServer* _server = nullptr;
-  SubState* _state = nullptr;
+  BoxState* _state = nullptr;
   DNSServer _dns;
 
   static String attr(const String& s) {
@@ -86,7 +91,7 @@ private:
     String html = F(
       "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
       "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
-      "<title>ZxheiFi Sub Vendo Setup</title><style>"
+      "<title>ZxheiFi Setup</title><style>"
       "body{font-family:sans-serif;background:#0f0f23;color:#e8e8ec;display:flex;justify-content:center;padding:24px 16px;}"
       ".card{background:#1a1a24;border-radius:16px;padding:24px;max-width:380px;width:100%;}"
       "h1{font-size:20px;margin:0 0 4px;color:#2dd4c9;}p.sub{font-size:13px;color:#888;margin:0 0 16px;}"
@@ -97,9 +102,10 @@ private:
       "font-weight:600;font-size:15px;}"
       ".err{background:#e1705522;border:1px solid #e17055;color:#e17055;padding:10px 12px;border-radius:8px;"
       "font-size:13px;margin-bottom:14px;}.ok{color:#34d399;font-size:13px;}"
-      "</style></head><body><div class='card'><h1>ZxheiFi Sub Vendo</h1>"
+      "</style></head><body><div class='card'>"
     );
-    html += "<p class='sub'>Firmware " SUB_FIRMWARE_VERSION " &middot; MAC " + WiFi.macAddress() + "</p>";
+    html += "<h1>" + attr(_title) + "</h1>";
+    html += "<p class='sub'>Firmware " + attr(_version) + " &middot; MAC " + WiFi.macAddress() + "</p>";
     if (_state->paired()) {
       html += "<p class='ok'>Paired as vendo " + String(_state->vendoId) + " (" + attr(_state->name) +
               "). Leave the pairing code blank to keep it.</p>";
@@ -160,4 +166,4 @@ private:
   }
 };
 
-#endif // SUB_SETUP_H
+#endif // BOX_SETUP_H
