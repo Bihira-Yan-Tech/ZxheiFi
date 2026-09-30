@@ -25,9 +25,15 @@
 #include "admin_api.h"
 #include "zx_protocol.h"
 
+struct StopCmd {
+  uint32_t id;
+  uint8_t port;
+};
+
 struct Vendo {
   uint8_t id = 0;
   String name;
+  String type = "wifi";       // "wifi" (coin box for hotspot time) or "charging" (Charging Station)
   String mac;                 // the sub's MAC, recorded at pairing
   uint8_t key[32];            // per-vendo HMAC key
   bool hasKey = false;        // false = removed pairing / waiting for a re-pair
@@ -40,6 +46,14 @@ struct Vendo {
   uint16_t pesosPerPulse = 1;
   uint16_t cfgVer = 1;        // bumped when name/pins change - the sub refetches
   uint32_t pairedAt = 0;
+  // Charging Station only
+  uint8_t ports = 4;          // 1-4
+  bool portActiveHigh = false;
+  uint32_t stopSeq = 0;       // persisted: stop ids must keep increasing across our reboots
+  std::vector<StopCmd> stops; // admin Stops not yet acknowledged by the box (RAM)
+  uint32_t portSecs[4] = {0, 0, 0, 0};   // last reported time left per port
+  uint32_t portSecsAtMs = 0;
+  bool isCharging() const { return type == "charging"; }
   // runtime only
   uint32_t lastSeenMs = 0;
   uint32_t lastCounter = 0;
@@ -53,6 +67,7 @@ struct PendingPair {
   uint8_t k0[32];
   uint8_t targetId;    // 0 = a new vendo, else a re-pair of that id
   uint32_t createdMs;
+  String type;         // for a new vendo: "wifi" / "charging"
 };
 
 struct CollectionEntry {
@@ -97,7 +112,7 @@ public:
 
   // Admin > Add Vendo (targetId 0) or Re-pair (targetId = that vendo).
   // Returns "" and fills `code`, or "too_many_pending" / "vendo_limit".
-  String addPending(const String& name, uint8_t targetId, String& code) {
+  String addPending(const String& name, uint8_t targetId, String& code, const String& type = "wifi") {
     expirePending();
     if (_pending.size() >= ZX_MAX_PENDING_PAIRS) return "too_many_pending";
     if (!targetId) {
@@ -110,6 +125,7 @@ public:
     p.name = name;
     p.targetId = targetId;
     p.createdMs = millis();
+    p.type = type;
     zx::pairKey(p.code, p.k0);
     _pending.push_back(p);
     code = p.code;
@@ -152,6 +168,7 @@ public:
       Vendo nv;
       nv.id = id;
       nv.name = p.name;
+      nv.type = p.type == "charging" ? "charging" : "wifi";
       _vendos.push_back(nv);
       v = &_vendos.back();
     }
@@ -246,6 +263,12 @@ public:
         o["pesosPerPulse"] = v.pesosPerPulse;
         o["cfgVer"] = v.cfgVer;
         o["pairedAt"] = v.pairedAt;
+        o["type"] = v.type;
+        if (v.isCharging()) {
+          o["ports"] = v.ports;
+          o["portActiveHigh"] = v.portActiveHigh;
+          o["stopSeq"] = v.stopSeq;
+        }
       }
       return true;
     });
@@ -279,6 +302,11 @@ private:
         v.pesosPerPulse = o["pesosPerPulse"] | 1;
         v.cfgVer = o["cfgVer"] | 1;
         v.pairedAt = o["pairedAt"] | 0;
+        v.type = String((const char*)(o["type"] | "wifi")) == "charging" ? "charging" : "wifi";
+        uint8_t ports = o["ports"] | 4;
+        v.ports = ports >= 1 && ports <= 4 ? ports : 4;
+        v.portActiveHigh = o["portActiveHigh"] | false;
+        v.stopSeq = o["stopSeq"] | 0UL;
       }
       _vendos.push_back(v);
     });

@@ -149,7 +149,13 @@ struct ActivityLogEntry {
   String detail;  // free-text context, e.g. a code/username or what changed
 };
 
-// Coin pesos taken by one vendo (0 = this main unit, 1.. = sub vendos).
+// Settings > Charging: one Charging Station price (v2).
+struct ChargeRateCfg {
+  uint32_t peso;
+  uint32_t minutes;
+};
+
+// Pesos taken by one vendo - coins and charging (0 = this main unit).
 struct VendoPeso {
   uint8_t id;
   uint32_t peso;
@@ -159,7 +165,8 @@ struct VendoPeso {
 struct DailySalesEntry {
   String dateStamp; // "YYYY-MM-DD"
   float coinRevenue;
-  std::vector<VendoPeso> byVendo; // coinRevenue split per vendo (older files: empty = all Main)
+  std::vector<VendoPeso> byVendo; // pesos per vendo, coins + charging (older files: empty = all Main)
+  float chargingRevenue = 0;      // Charging Stations (v2)
   float voucherRevenue;
   float subscriptionRevenue;
   uint32_t users;
@@ -225,7 +232,14 @@ public:
   // Revenue is split by how it was collected so the Sales tab can show
   // a breakdown, not just one lump total.
   float coinRevenueToday = 0;
-  std::vector<VendoPeso> coinByVendoToday; // coinRevenueToday split per vendo
+  std::vector<VendoPeso> coinByVendoToday; // pesos per vendo today (coins + charging)
+  float chargingRevenueToday = 0;           // Charging Stations (v2)
+
+  // Settings > Charging (v2) - pushed to every Charging Station box.
+  std::vector<ChargeRateCfg> chargeRates;
+  uint16_t chargeMaxMinutes = 180;
+  String chargeLang = "tl";
+  uint32_t chargeCfgVer = 0;   // bumped on change (RAM) - boxes refetch their config
   float voucherRevenueToday = 0;
   float subscriptionRevenueToday = 0;
   uint32_t usersToday = 0;
@@ -253,12 +267,28 @@ public:
   // drift from the coin total. Saved right away (a sale is money).
   void addCoinRevenue(uint8_t vendoId, uint32_t peso) {
     coinRevenueToday += peso;
-    bool found = false;
-    for (auto& e : coinByVendoToday) {
-      if (e.id == vendoId) { e.peso += peso; found = true; break; }
-    }
-    if (!found) coinByVendoToday.push_back({vendoId, peso});
+    addVendoPeso(vendoId, peso);
     saveToday();
+  }
+
+  void addChargeRevenue(uint8_t vendoId, uint32_t peso) {
+    chargingRevenueToday += peso;
+    addVendoPeso(vendoId, peso);
+    saveToday();
+  }
+
+  void addVendoPeso(uint8_t vendoId, uint32_t peso) {
+    for (auto& e : coinByVendoToday) {
+      if (e.id == vendoId) { e.peso += peso; return; }
+    }
+    coinByVendoToday.push_back({vendoId, peso});
+  }
+
+  void seedDefaultChargeRates() {
+    chargeRates.clear();
+    chargeRates.push_back({5, 30});
+    chargeRates.push_back({10, 60});
+    chargeRates.push_back({20, 150});
   }
 
   uint32_t coinTodayFor(uint8_t vendoId) const {
@@ -283,7 +313,7 @@ public:
   }
 
   float revenueToday() const {
-    return coinRevenueToday + voucherRevenueToday + subscriptionRevenueToday;
+    return coinRevenueToday + voucherRevenueToday + subscriptionRevenueToday + chargingRevenueToday;
   }
 
   // Exact-match lookup by denomination - the heart of the unified rate
@@ -528,6 +558,7 @@ public:
       e.dateStamp = o["dateStamp"].as<String>();
       e.coinRevenue = o["coinRevenue"] | 0.0f;
       readByVendo(o["byVendo"], e.byVendo);
+      e.chargingRevenue = o["chargingRevenue"] | 0.0f;
       e.voucherRevenue = o["voucherRevenue"] | 0.0f;
       e.subscriptionRevenue = o["subscriptionRevenue"] | 0.0f;
       e.users = o["users"] | 0;
@@ -542,6 +573,7 @@ public:
       o["dateStamp"] = e.dateStamp;
       o["coinRevenue"] = e.coinRevenue;
       writeByVendo(o, e.byVendo);
+      o["chargingRevenue"] = e.chargingRevenue;
       o["voucherRevenue"] = e.voucherRevenue;
       o["subscriptionRevenue"] = e.subscriptionRevenue;
       o["users"] = e.users;
@@ -749,6 +781,7 @@ public:
   // ---- Settings -------------------------------------------------------
 
   void loadSettings() {
+    seedDefaultChargeRates();
     if (!SPIFFS.exists(CONFIG_FILE)) { seedDefaultRateProfiles(); seedDefaultSpeedProfiles(); return; }
     File f = SPIFFS.open(CONFIG_FILE, "r");
     if (!f) { seedDefaultRateProfiles(); seedDefaultSpeedProfiles(); return; }
@@ -804,6 +837,17 @@ public:
     for (JsonVariant v : doc["blockedMacs"].as<JsonArray>()) {
       blockedMacs.push_back(v.as<String>());
     }
+
+    if (doc.containsKey("chargeRates")) {
+      chargeRates.clear();
+      for (JsonObject o : doc["chargeRates"].as<JsonArray>()) {
+        if (chargeRates.size() >= 10) break;
+        uint32_t peso = o["peso"] | 0, minutes = o["minutes"] | 0;
+        if (peso && minutes) chargeRates.push_back({peso, minutes});
+      }
+    }
+    chargeMaxMinutes = doc["chargeMaxMinutes"] | 180;
+    chargeLang = doc["chargeLang"] | String("tl");
   }
 
   // Old Tier1/2/3 compile-time defaults, converted to the new unified
@@ -851,6 +895,14 @@ public:
     }
     JsonArray blockedArr = doc.createNestedArray("blockedMacs");
     for (auto& m : blockedMacs) blockedArr.add(m);
+    JsonArray chargeArr = doc.createNestedArray("chargeRates");
+    for (auto& r : chargeRates) {
+      JsonObject o = chargeArr.createNestedObject();
+      o["peso"] = r.peso;
+      o["minutes"] = r.minutes;
+    }
+    doc["chargeMaxMinutes"] = chargeMaxMinutes;
+    doc["chargeLang"] = chargeLang;
 
     // Out of heap (capacity 0) or too big: writing now would leave a
     // truncated config.json that resets every setting on the next boot.
@@ -1017,6 +1069,7 @@ public:
       e.dateStamp = todayDateStamp;
       e.coinRevenue = coinRevenueToday;
       e.byVendo = coinByVendoToday;
+      e.chargingRevenue = chargingRevenueToday;
       e.voucherRevenue = voucherRevenueToday;
       e.subscriptionRevenue = subscriptionRevenueToday;
       e.users = usersToday;
@@ -1031,6 +1084,7 @@ public:
     todayDateStamp = currentDateStamp;
     coinRevenueToday = 0;
     coinByVendoToday.clear();
+    chargingRevenueToday = 0;
     voucherRevenueToday = 0;
     subscriptionRevenueToday = 0;
     usersToday = 0;
@@ -1046,6 +1100,7 @@ public:
     doc["dateStamp"] = todayDateStamp;
     doc["coin"] = coinRevenueToday;
     writeByVendo(doc.as<JsonObject>(), coinByVendoToday);
+    doc["charging"] = chargingRevenueToday;
     doc["voucher"] = voucherRevenueToday;
     doc["subscription"] = subscriptionRevenueToday;
     doc["users"] = usersToday;
@@ -1068,6 +1123,7 @@ public:
     todayDateStamp = doc["dateStamp"] | String("");
     coinRevenueToday = doc["coin"] | 0.0f;
     readByVendo(doc["byVendo"], coinByVendoToday);
+    chargingRevenueToday = doc["charging"] | 0.0f;
     voucherRevenueToday = doc["voucher"] | 0.0f;
     subscriptionRevenueToday = doc["subscription"] | 0.0f;
     usersToday = doc["users"] | 0;

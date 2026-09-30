@@ -325,7 +325,7 @@ private:
     JsonArray vs = out.createNestedArray("vendos");
     if (_vendos) {
       for (auto& v : _vendos->all()) {
-        if (v.id && !v.hasKey) continue;
+        if (v.id && (!v.hasKey || v.isCharging())) continue;   // coin boxes a customer can pick
         JsonObject o = vs.createNestedObject();
         o["id"] = v.id;
         o["name"] = v.name;
@@ -764,6 +764,7 @@ private:
     out["coinRevenueToday"] = _admin->coinRevenueToday;
     out["voucherRevenueToday"] = _admin->voucherRevenueToday;
     out["subscriptionRevenueToday"] = _admin->subscriptionRevenueToday;
+    out["chargingRevenueToday"] = _admin->chargingRevenueToday;
     out["unusedVouchers"] = _admin->unusedVoucherCount();
     out["mikrotik"] = _mikrotikReachable;
     out["role"] = admin->role; // lets the GUI show/hide super-only tabs
@@ -884,7 +885,7 @@ private:
   void handleAdminGetSettings() {
     AdminAccount* admin = requireAdmin(/*requireSuper=*/true);
     if (!admin) return;
-    DynamicJsonDocument out(3072);
+    DynamicJsonDocument out(4096);
     out["nightPromoEnabled"] = _admin->settingNightPromoEnabled;
     out["idleTimeoutMin"] = _admin->settingIdleTimeoutMin;
     out["autoRebootTime"] = _admin->settingAutoRebootTime;
@@ -907,6 +908,14 @@ private:
     out["telegramEnabled"] = _admin->telegramEnabled;
     out["telegramBotToken"] = _admin->telegramBotToken;
     out["telegramChatId"] = _admin->telegramChatId;
+    JsonArray charge = out.createNestedArray("chargeRates");
+    for (auto& r : _admin->chargeRates) {
+      JsonObject o = charge.createNestedObject();
+      o["peso"] = r.peso;
+      o["minutes"] = r.minutes;
+    }
+    out["chargeMaxMinutes"] = _admin->chargeMaxMinutes;
+    out["chargeLang"] = _admin->chargeLang;
     sendJson(200, out);
   }
 
@@ -965,11 +974,47 @@ private:
     String announcement = in["announcement"] | _admin->announcement;
     if (announcement.length() > MAX_ANNOUNCEMENT_LEN) announcement = announcement.substring(0, MAX_ANNOUNCEMENT_LEN);
 
+    // Settings > Charging (v2)
+    std::vector<ChargeRateCfg> chargeRates = _admin->chargeRates;
+    if (in.containsKey("chargeRates")) {
+      chargeRates.clear();
+      if (!in["chargeRates"].is<JsonArray>()) { sendError(400, "bad_charge_rates"); return; }
+      JsonArray arr = in["chargeRates"].as<JsonArray>();
+      if (arr.size() > 10) { sendError(400, "bad_charge_rates"); return; }
+      for (JsonVariant v : arr) {
+        if (!v["peso"].is<long>() || !v["minutes"].is<long>()) { sendError(400, "bad_charge_rates"); return; }
+        long peso = v["peso"].as<long>(), minutes = v["minutes"].as<long>();
+        if (peso < 1 || peso > 1000 || minutes < 1 || minutes > 1440) { sendError(400, "bad_charge_rates"); return; }
+        for (auto& r : chargeRates) {
+          if ((long)r.peso == peso) { sendError(400, "bad_charge_rates"); return; }
+        }
+        chargeRates.push_back({(uint32_t)peso, (uint32_t)minutes});
+      }
+    }
+    long chargeMax = _admin->chargeMaxMinutes;
+    if (in.containsKey("chargeMaxMinutes")) {
+      if (!in["chargeMaxMinutes"].is<long>()) { sendError(400, "bad_charge_max"); return; }
+      chargeMax = in["chargeMaxMinutes"].as<long>();
+      if (chargeMax < 10 || chargeMax > 1440) { sendError(400, "bad_charge_max"); return; }
+    }
+    String chargeLang = in["chargeLang"] | _admin->chargeLang;
+    if (chargeLang != "tl" && chargeLang != "en") { sendError(400, "bad_charge_lang"); return; }
+    bool chargeChanged = chargeMax != _admin->chargeMaxMinutes || chargeLang != _admin->chargeLang ||
+                         chargeRates.size() != _admin->chargeRates.size();
+    for (size_t i = 0; !chargeChanged && i < chargeRates.size(); i++) {
+      chargeChanged = chargeRates[i].peso != _admin->chargeRates[i].peso ||
+                      chargeRates[i].minutes != _admin->chargeRates[i].minutes;
+    }
+
     bool pinsChanged = coinPin != _admin->coinPin || relayPin != _admin->relayPin ||
                        (bool)(in["relayActiveHigh"] | _admin->relayActiveHigh) != _admin->relayActiveHigh;
     if (!speeds.empty()) _admin->speedProfiles = speeds;
     if (ratesGiven) _admin->rateProfiles = rates;
     _admin->announcement = announcement;
+    _admin->chargeRates = chargeRates;
+    _admin->chargeMaxMinutes = (uint16_t)chargeMax;
+    _admin->chargeLang = chargeLang;
+    if (chargeChanged) _admin->chargeCfgVer++;
     _admin->coinPin = coinPin;
     _admin->relayPin = relayPin;
     _admin->relayActiveHigh = in["relayActiveHigh"] | _admin->relayActiveHigh;
@@ -1214,6 +1259,7 @@ private:
       o["dateStamp"] = e.dateStamp;
       o["coinRevenue"] = e.coinRevenue;
       AdminAPI::writeByVendo(o.as<JsonObject>(), e.byVendo);
+      o["chargingRevenue"] = e.chargingRevenue;
       o["voucherRevenue"] = e.voucherRevenue;
       o["subscriptionRevenue"] = e.subscriptionRevenue;
       o["users"] = e.users;
@@ -1225,6 +1271,7 @@ private:
     today["dateStamp"] = _admin->todayDateStamp;
     today["coinRevenue"] = _admin->coinRevenueToday;
     AdminAPI::writeByVendo(today.as<JsonObject>(), _admin->coinByVendoToday);
+    today["chargingRevenue"] = _admin->chargingRevenueToday;
     today["voucherRevenue"] = _admin->voucherRevenueToday;
     today["subscriptionRevenue"] = _admin->subscriptionRevenueToday;
     today["users"] = _admin->usersToday;

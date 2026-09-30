@@ -78,7 +78,7 @@ public:
   String start(uint8_t vendo, const String& mac, const String& extendSession, String& token, uint32_t& waitSec) {
     if (vendo > MAX_SUB_VENDOS) return "vendo_unknown";
     Vendo* v = _vendos->find(vendo);
-    if (!v) return "vendo_unknown";
+    if (!v || v->isCharging()) return "vendo_unknown";     // a Charging Station sells no hotspot time
     if (!_vendos->isOnline(*v)) return "vendo_offline";   // incl. a sub waiting to be re-paired
     Slot& s = _slots[vendo];
     if (s.reserved && token.length() && token == s.token) { // same customer tapping again

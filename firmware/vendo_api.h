@@ -11,6 +11,11 @@
  *   POST /api/vendo/poll    {v, n}                -> {n, relay, rid, fast, cfgVer, name}
  *   POST /api/vendo/coin    {v, n, seq, peso, rid} -> {n, ok[, dup]}
  *   POST /api/vendo/config  {v, n}                -> {n, cfgVer, name, coinPin, ...}
+ *   POST /api/vendo/charge  {v, n, seq, peso, port, minutes} -> {n, ok[, dup]}   (Charging Stations)
+ *
+ * Charging Stations (v2 part 2, charging/) run their ports themselves - so
+ * charging works with no WiFi - and report every sale with /charge. Their
+ * polls carry {ports:[secs...], ackStop} and the reply carries admin Stops.
  *
  * "n" must keep increasing (replays are refused), "seq" dedupes coin
  * resends, and a coin's seq + box total are saved BEFORE it is credited
@@ -25,6 +30,7 @@
  *   POST /api/admin/vendos/collected    {id}
  *   POST /api/admin/vendos/remove       {id}
  *   POST /api/admin/vendos/repair       {id}        -> new pairing code
+ *   POST /api/admin/vendos/stop         {id, port}  Charging Station: stop a port (staff too)
  *
  * tools/mock_server.py mirrors all of this; tools/vendo_test.py is the
  * contract test.
@@ -58,6 +64,7 @@ public:
     _server->on("/api/vendo/poll", HTTP_POST, [this]() { handlePoll(); });
     _server->on("/api/vendo/coin", HTTP_POST, [this]() { handleCoin(); });
     _server->on("/api/vendo/config", HTTP_POST, [this]() { handleConfig(); });
+    _server->on("/api/vendo/charge", HTTP_POST, [this]() { handleCharge(); });
 
     _server->on("/api/admin/vendos", HTTP_GET, [this]() { handleList(); });
     _server->on("/api/admin/vendos/collections", HTTP_GET, [this]() { handleCollections(); });
@@ -66,6 +73,7 @@ public:
     _server->on("/api/admin/vendos/collected", HTTP_POST, [this]() { handleCollected(); });
     _server->on("/api/admin/vendos/remove", HTTP_POST, [this]() { handleRemove(); });
     _server->on("/api/admin/vendos/repair", HTTP_POST, [this]() { handleRepair(); });
+    _server->on("/api/admin/vendos/stop", HTTP_POST, [this]() { handleStop(); });
   }
 
   // Offline alerts: a paired sub silent for ZX_OFFLINE_ALERT_MS is logged
@@ -146,13 +154,38 @@ private:
     return v;
   }
 
-  static void fillConfig(const Vendo& v, JsonObject o) {
-    o["cfgVer"] = v.cfgVer;
+  // What the box sees as its config version: a Charging Station also
+  // refetches when Settings > Charging changes.
+  uint32_t effectiveCfgVer(const Vendo& v) const {
+    return v.cfgVer + (v.isCharging() ? _admin->chargeCfgVer : 0);
+  }
+
+  void fillConfig(const Vendo& v, JsonObject o) {
+    o["cfgVer"] = effectiveCfgVer(v);
     o["name"] = v.name;
+    o["type"] = v.type;
     o["coinPin"] = v.coinPin;
     o["relayPin"] = v.relayPin;
     o["relayActiveHigh"] = v.relayActiveHigh;
     o["pesosPerPulse"] = v.pesosPerPulse;
+    if (v.isCharging()) {
+      o["ports"] = v.ports;
+      o["portActiveHigh"] = v.portActiveHigh;
+      o["maxMinutes"] = _admin->chargeMaxMinutes;
+      o["lang"] = _admin->chargeLang;
+      JsonArray rates = o.createNestedArray("rates");
+      for (auto& r : _admin->chargeRates) {
+        JsonObject ro = rates.createNestedObject();
+        ro["peso"] = r.peso;
+        ro["minutes"] = r.minutes;
+      }
+    }
+  }
+
+  // Coin/relay pins a box may use: a Charging Station's D1/D2 are its I2C bus.
+  static bool pinAllowed(const Vendo& v, const String& pin) {
+    if (v.isCharging()) return pin == "D5" || pin == "D6" || pin == "D7";
+    return coinPinGpio(pin) >= 0;
   }
 
   static String cleanName(String s) {
@@ -208,7 +241,7 @@ private:
     if (!v) { _gui->replyError(409, "vendo_limit"); return; }
     _coin->resetSlot(v->id);
     _admin->logEvent("vendo_paired", v->name + " (" + mac + ")");
-    DynamicJsonDocument out(512);
+    DynamicJsonDocument out(1024);
     out["vendoId"] = v->id;
     out["name"] = v->name;
     out["nonce"] = nonce;
@@ -218,10 +251,41 @@ private:
   }
 
   void handlePoll() {
-    DynamicJsonDocument in(128);
+    DynamicJsonDocument in(256);
     uint32_t n = 0;
     Vendo* v = authVendo(in, n);
     if (!v) return;
+    if (v->isCharging()) {
+      if (in["ports"].is<JsonArray>()) {
+        uint8_t i = 0;
+        for (JsonVariant p : in["ports"].as<JsonArray>()) {
+          if (i >= 4) break;
+          long secs = p | 0L;
+          v->portSecs[i++] = secs > 0 ? (uint32_t)secs : 0;
+        }
+        while (i < 4) v->portSecs[i++] = 0;
+        v->portSecsAtMs = millis() | 1;
+      }
+      uint32_t ack = in["ackStop"] | 0UL;
+      for (size_t i = v->stops.size(); i-- > 0;) {
+        if (v->stops[i].id <= ack) v->stops.erase(v->stops.begin() + i);
+      }
+      DynamicJsonDocument out(512);
+      out["n"] = n;
+      out["relay"] = false;
+      out["rid"] = 0;
+      out["fast"] = false;
+      out["cfgVer"] = effectiveCfgVer(*v);
+      out["name"] = v->name;
+      JsonArray stops = out.createNestedArray("stop");
+      for (auto& st : v->stops) {
+        JsonObject o = stops.createNestedObject();
+        o["id"] = st.id;
+        o["port"] = st.port;
+      }
+      sendSigned(200, out, v->key);
+      return;
+    }
     uint32_t rid = 0;
     bool on = _coin->relayFor(v->id, rid);
     DynamicJsonDocument out(256);
@@ -239,6 +303,7 @@ private:
     uint32_t n = 0;
     Vendo* v = authVendo(in, n);
     if (!v) return;
+    if (v->isCharging()) { _gui->replyError(400, "wrong_type"); return; }
     long seq = in["seq"] | 0L;
     long peso = in["peso"] | 0L;
     long rid = in["rid"] | 0L;
@@ -263,9 +328,48 @@ private:
     uint32_t n = 0;
     Vendo* v = authVendo(in, n);
     if (!v) return;
-    DynamicJsonDocument out(384);
+    DynamicJsonDocument out(1024);
     out["n"] = n;
     fillConfig(*v, out.as<JsonObject>());
+    sendSigned(200, out, v->key);
+  }
+
+  // A Charging Station sale (the box already started the port). Saved
+  // before it's acknowledged; `seq` shares the box's coin sequence.
+  void handleCharge() {
+    DynamicJsonDocument in(256);
+    uint32_t n = 0;
+    Vendo* v = authVendo(in, n);
+    if (!v) return;
+    if (!v->isCharging()) { _gui->replyError(400, "wrong_type"); return; }
+    long seq = in["seq"] | 0L;
+    long peso = in["peso"] | 0L;
+    long port = in["port"] | -1L;
+    long minutes = in["minutes"] | 0L;
+    if (seq < 1 || peso < 1 || peso > 1000 || port < 0 || port > v->ports || minutes < 0 || minutes > 2880) {
+      _gui->replyError(400, "bad_charge");
+      return;
+    }
+    DynamicJsonDocument out(96);
+    out["n"] = n;
+    out["ok"] = true;
+    if ((uint32_t)seq <= v->lastCoinSeq) {
+      out["dup"] = true;
+      sendSigned(200, out, v->key);
+      return;
+    }
+    v->lastCoinSeq = (uint32_t)seq;
+    v->boxTotal += (uint32_t)peso;
+    _reg->save();                 // persisted before the sale is counted + acked
+    _admin->addChargeRevenue(v->id, (uint32_t)peso);
+    if (port) {
+      String what = "PHP " + String(peso) + " = " + String(minutes) + " min, port " + String(port);
+      _admin->logEvent("charge", v->name + ": " + what);
+      _telegram->queueMessage("Charging sale (" + v->name + "): " + what);
+    } else {
+      _admin->logEvent("charge_unclaimed", v->name + ": PHP " + String(peso) +
+                       " never assigned to a port - counted in sales");
+    }
     sendSigned(200, out, v->key);
   }
 
@@ -274,7 +378,7 @@ private:
   void handleList() {
     AdminAccount* a = _gui->authAdmin();
     if (!a) return;
-    DynamicJsonDocument out(640 + 360 * (MAX_SUB_VENDOS + 1));
+    DynamicJsonDocument out(640 + 480 * (MAX_SUB_VENDOS + 1));
     out["board"] = BOARD_NAME;
     out["limit"] = MAX_SUB_VENDOS;
     JsonArray arr = out.createNestedArray("vendos");
@@ -287,12 +391,20 @@ private:
       o["boxTotal"] = v.boxTotal;
       o["commissionPct"] = v.commissionPct;
       o["paired"] = v.id == 0 || v.hasKey;
+      o["type"] = v.type;
       if (v.id) {
         o["lastSeenSec"] = v.lastSeenMs ? (long)((millis() - v.lastSeenMs) / 1000) : -1L;
         o["coinPin"] = v.coinPin;
         o["relayPin"] = v.relayPin;
         o["relayActiveHigh"] = v.relayActiveHigh;
         o["pesosPerPulse"] = v.pesosPerPulse;
+        if (v.isCharging()) {
+          o["ports"] = v.ports;
+          o["portActiveHigh"] = v.portActiveHigh;
+          JsonArray secs = o.createNestedArray("portSecs");
+          for (uint8_t i = 0; i < v.ports; i++) secs.add(v.portSecs[i]);
+          o["portSecsAgoSec"] = v.portSecsAtMs ? (long)((millis() - v.portSecsAtMs) / 1000) : -1L;
+        }
       }
     }
     JsonArray pend = out.createNestedArray("pending");
@@ -335,8 +447,10 @@ private:
     if (!parseBody(in)) return;
     String name = cleanName(in["name"] | "");
     if (!name.length()) { _gui->replyError(400, "bad_name"); return; }
+    String type = in["type"] | "wifi";
+    if (type != "wifi" && type != "charging") { _gui->replyError(400, "bad_type"); return; }
     String code;
-    String err = _reg->addPending(name, 0, code);
+    String err = _reg->addPending(name, 0, code, type);
     if (err.length()) { replyLimit(err); return; }
     _admin->logEvent("vendo_pair_code", name);
     DynamicJsonDocument out(128);
@@ -367,6 +481,8 @@ private:
     String coinPin = v->coinPin, relayPin = v->relayPin;
     bool activeHigh = v->relayActiveHigh;
     long pulse = v->pesosPerPulse;
+    long ports = v->ports;
+    bool portHigh = v->portActiveHigh;
     if (v->id) {
       if (in.containsKey("coinPin")) coinPin = in["coinPin"] | "";
       if (in.containsKey("relayPin")) relayPin = in["relayPin"] | "";
@@ -378,7 +494,18 @@ private:
         if (!in["pesosPerPulse"].is<long>()) { _gui->replyError(400, "bad_pulse_value"); return; }
         pulse = in["pesosPerPulse"].as<long>();
       }
-      if (coinPinGpio(coinPin) < 0 || (relayPin != "none" && coinPinGpio(relayPin) < 0)) {
+      if (v->isCharging()) {
+        if (in.containsKey("ports")) {
+          if (!in["ports"].is<long>()) { _gui->replyError(400, "bad_ports"); return; }
+          ports = in["ports"].as<long>();
+        }
+        if (ports < 1 || ports > 4) { _gui->replyError(400, "bad_ports"); return; }
+        if (in.containsKey("portActiveHigh")) {
+          if (!in["portActiveHigh"].is<bool>()) { _gui->replyError(400, "bad_relay_level"); return; }
+          portHigh = in["portActiveHigh"].as<bool>();
+        }
+      }
+      if (!pinAllowed(*v, coinPin) || (relayPin != "none" && !pinAllowed(*v, relayPin))) {
         _gui->replyError(400, "invalid_pin");
         return;
       }
@@ -387,7 +514,8 @@ private:
     }
 
     bool cfgChanged = v->id && (name != v->name || coinPin != v->coinPin || relayPin != v->relayPin ||
-                                activeHigh != v->relayActiveHigh || pulse != v->pesosPerPulse);
+                                activeHigh != v->relayActiveHigh || pulse != v->pesosPerPulse ||
+                                ports != v->ports || portHigh != v->portActiveHigh);
     v->name = name;
     v->commissionPct = (uint8_t)commission;
     if (v->id) {
@@ -395,6 +523,8 @@ private:
       v->relayPin = relayPin;
       v->relayActiveHigh = activeHigh;
       v->pesosPerPulse = (uint16_t)pulse;
+      v->ports = (uint8_t)ports;
+      v->portActiveHigh = portHigh;
       if (cfgChanged) v->cfgVer++;
     }
     _reg->save();
@@ -443,7 +573,7 @@ private:
     if (!v) return;
     _reg->dropPendingFor(v->id);
     String code;
-    String err = _reg->addPending(v->name, v->id, code);
+    String err = _reg->addPending(v->name, v->id, code, v->type);
     if (err.length()) { replyLimit(err); return; }
     _reg->invalidate(v->id);      // the old key stops working right away
     _coin->resetSlot(v->id);
@@ -452,6 +582,26 @@ private:
     out["code"] = code;
     out["expiresInSec"] = ZX_PAIR_CODE_TTL_MS / 1000;
     _gui->replyJson(200, out);
+  }
+
+  // Charging Station: stop a port. Delivered in the box's next poll replies
+  // until it acknowledges; the minutes the customer loses are logged.
+  void handleStop() {
+    AdminAccount* a = _gui->authAdmin();
+    if (!a) return;
+    DynamicJsonDocument in(128);
+    if (!parseBody(in)) return;
+    Vendo* v = vendoFromBody(in);
+    if (!v) return;
+    if (!v->isCharging()) { _gui->replyError(400, "not_charging"); return; }
+    long port = in["port"] | 0L;
+    if (port < 1 || port > v->ports) { _gui->replyError(400, "bad_port"); return; }
+    if (v->stops.size() >= 16) v->stops.erase(v->stops.begin());   // the box has been offline a long time
+    v->stops.push_back({++v->stopSeq, (uint8_t)port});
+    _reg->save();                 // stopSeq must survive a reboot
+    _admin->logEvent("charge_stop", v->name + " port " + String(port) + " stopped by " + a->username +
+                     " (~" + String(v->portSecs[port - 1] / 60) + " min left)");
+    _gui->replyOk();
   }
 };
 
