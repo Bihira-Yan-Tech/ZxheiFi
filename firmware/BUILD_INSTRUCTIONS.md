@@ -1,6 +1,6 @@
 # Building the firmware
 
-ZxheiFi has two firmwares:
+ZxheiFi has three firmwares:
 
 | Firmware | Source | Output the Setup Companion flashes |
 |---|---|---|
@@ -12,7 +12,7 @@ All three include the shared protocol header `common/zx_protocol.h`; the
 two boxes also share `common/box/` (settings storage, record queue, Setup
 Wizard, signed link).
 
-You normally don't need to build anything: both `.bin` files are
+You normally don't need to build anything: all three `.bin` files are
 committed and bundled in the Setup Companion.
 
 ## PlatformIO (recommended)
@@ -33,7 +33,7 @@ PlatformIO splits `${PROJECT_DIR}` on the spaces in this repo's path.
 ```bash
 python tools/run_host_tests.py     # C++ on the PC: zx_protocol.h + the Charging Station's charge_logic.h
 python tools/test_zx_protocol.py   # Python reference, same vectors
-python tools/vendo_test.py         # sub-vendo API contract (mock server)
+python tools/vendo_test.py         # sub vendo + charging station API contract (mock server)
 python tools/regression_test.py    # v1 API contract (mock server)
 ```
 
@@ -60,7 +60,7 @@ afterwards.
    `charging/`), then change `#include "box/..."` paths if needed. The IDE
    doesn't know about `common/`. The Charging Station also needs the
    "ESP8266 and ESP32 OLED driver for SSD1306 displays" library (ThingPulse).
-3. Open `firmware/nodemcu_firmware.ino` (or `subvendo/subvendo.ino`) and set
+3. Open `firmware/nodemcu_firmware.ino` (or `subvendo/subvendo.ino`, `charging/charging.ino`) and set
    these options:
    - Board: "NodeMCU 1.0 (ESP-12E Module)"
    - Flash Size: "4MB (FS:3MB)"
