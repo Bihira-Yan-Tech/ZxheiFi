@@ -24,6 +24,10 @@ print a QR sticker per box, see status / income / coin-box contents and an
 optional commission per box, and every coin travels over a signed, replay-proof,
 fail-closed protocol. See [docs/14-sub-vendo.md](docs/14-sub-vendo.md).
 
+**New in v2: Charging Station** - a coin-op phone charger box (4 USB ports,
+a button per port, small OLED screen) that keeps working with no WiFi and
+syncs every sale to the main unit. See [docs/15-charging-station.md](docs/15-charging-station.md).
+
 **For customers**
 - Open WiFi with a login page: **Insert Coin** (live ₱/minutes counter,
   auto-connect) or a **voucher** code (type it or scan its QR).
@@ -61,7 +65,8 @@ fail-closed protocol. See [docs/14-sub-vendo.md](docs/14-sub-vendo.md).
 ```
 firmware/        Main unit firmware (NodeMCU ESP8266) + zxheifi_firmware.bin (ready to flash)
 subvendo/        Sub Vendo firmware + zxheifi_subvendo.bin (ready to flash)
-common/          zx_protocol.h - the signed main <-> sub protocol, shared by both firmwares
+charging/        Charging Station firmware + zxheifi_charging.bin (ready to flash)
+common/          zx_protocol.h (signed main <-> box protocol) + box/ (code shared by every box)
 mikrotik/        Customer portal (gui/) + generated RouterOS scripts (*.rsc)
 desktop-app/     Setup Companion (Python + CustomTkinter), build.py -> exe/installer
 vouchers/        Offline voucher generator
@@ -101,7 +106,8 @@ python desktop-app/build.py        # build the portable exe + installer
 [`docs/`](docs/) — overview, hardware, MikroTik (hAP lite / hEX), flashing,
 portal customization, features, FAQ/troubleshooting, coin acceptor wiring,
 setup wizard, [changelog](docs/09-changelog.md), [roadmap](docs/10-feature-roadmap.md)
-the [v2 masterplan](docs/13-v2-masterplan.md) and [Sub Vendo](docs/14-sub-vendo.md).
+the [v2 masterplan](docs/13-v2-masterplan.md), [Sub Vendo](docs/14-sub-vendo.md) and
+[Charging Station](docs/15-charging-station.md).
 
 ## Credits
 

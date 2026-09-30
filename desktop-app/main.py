@@ -55,8 +55,15 @@ _BUNDLED_SUB_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 DEFAULT_SUB_FIRMWARE = _BUNDLED_SUB_FIRMWARE if os.path.isfile(_BUNDLED_SUB_FIRMWARE) else os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "subvendo", "zxheifi_subvendo.bin")
 )
+_BUNDLED_CHARGING_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware",
+                                          "zxheifi_charging.bin")
+DEFAULT_CHARGING_FIRMWARE = _BUNDLED_CHARGING_FIRMWARE if os.path.isfile(_BUNDLED_CHARGING_FIRMWARE) else \
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "charging", "zxheifi_charging.bin"))
 DEVICE_MAIN = "Main unit"
 DEVICE_SUB = "Sub Vendo"
+DEVICE_CHARGING = "Charging Station"
+DEVICE_FIRMWARE = {DEVICE_MAIN: DEFAULT_FIRMWARE, DEVICE_SUB: DEFAULT_SUB_FIRMWARE,
+                   DEVICE_CHARGING: DEFAULT_CHARGING_FIRMWARE}
 # Network Settings (incl. the generated NodeMCU API password) persist
 # between runs - re-running Config with a freshly generated password would
 # silently break a NodeMCU already set up with the old one. The router's
@@ -149,7 +156,7 @@ class FlashTab(ctk.CTkFrame):
         type_row = ctk.CTkFrame(parent, fg_color="transparent")
         type_row.pack(fill="x", padx=16, pady=(8, 0))
         ctk.CTkLabel(type_row, text="Device type:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.device_type = ctk.CTkSegmentedButton(type_row, values=[DEVICE_MAIN, DEVICE_SUB],
+        self.device_type = ctk.CTkSegmentedButton(type_row, values=[DEVICE_MAIN, DEVICE_SUB, DEVICE_CHARGING],
                                                   command=self._on_device_type,
                                                   selected_color=theme.ACCENT,
                                                   selected_hover_color=theme.ACCENT_DARK)
@@ -270,22 +277,28 @@ class FlashTab(ctk.CTkFrame):
             return ("Sub Vendo = an extra coin box for the same WiFi. After flashing it opens the "
                     "\"ZxheiFi-Sub-Setup\" WiFi:\nenter the WiFi of its spot and the pairing code "
                     "from Admin > Vendos > Add Vendo.")
+        if kind == DEVICE_CHARGING:
+            return ("Charging Station = a coin-op phone charger (4 ports, buttons + screen). After flashing it opens "
+                    "the \"ZxheiFi-Charge-Setup\" WiFi:\nenter the WiFi of its spot and the pairing code from "
+                    "Admin > Vendos > Add Vendo (type: Charging Station).")
         return "Main unit = the NodeMCU that runs the shop (talks to the MikroTik)."
 
     def _is_sub(self):
-        return self.device_type.get() == DEVICE_SUB
+        """Any box that isn't the main unit (Sub Vendo or Charging Station)."""
+        return self.device_type.get() != DEVICE_MAIN
 
     def _on_device_type(self, kind):
         # Swap the default .bin only if the field still holds a default -
         # a file the operator picked with Browse... is kept.
-        if self.fw_var.get() in (DEFAULT_FIRMWARE, DEFAULT_SUB_FIRMWARE):
-            self.fw_var.set(DEFAULT_SUB_FIRMWARE if kind == DEVICE_SUB else DEFAULT_FIRMWARE)
+        if self.fw_var.get() in DEVICE_FIRMWARE.values():
+            self.fw_var.set(DEVICE_FIRMWARE.get(kind, DEFAULT_FIRMWARE))
         self.device_hint_var.set(self._device_hint(kind))
 
     def _report_mac(self, mac, ip):
         """Hands a detected MAC to Configure MikroTik - main units only."""
         if self._is_sub():
-            self._log(f"Sub Vendo MAC {mac} (not copied to Configure MikroTik - sub vendos need no router setup)")
+            self._log(f"{self.device_type.get()} MAC {mac} (not copied to Configure MikroTik - "
+                      "boxes need no router setup)")
             return
         if self.on_device_detected:
             self.on_device_detected(mac, ip)
@@ -351,9 +364,12 @@ class FlashTab(ctk.CTkFrame):
             self.progress.set(1 if ok else 0)
             self._log("=== Flash succeeded ===" if ok else f"=== Flash failed (exit {code}) ===")
             if ok and self._is_sub():
-                self._log("Sub Vendo flashed. It opens the \"ZxheiFi-Sub-Setup\" WiFi (first boot, or press "
-                          "FLASH while the blue LED blinks fast after power-on). Get the pairing code from "
-                          "Admin > Vendos > Add Vendo.")
+                charging = self.device_type.get() == DEVICE_CHARGING
+                self._log(f"{self.device_type.get()} flashed. It opens the "
+                          f"\"{'ZxheiFi-Charge-Setup' if charging else 'ZxheiFi-Sub-Setup'}\" WiFi (first boot, "
+                          "or press FLASH while the blue LED blinks fast after power-on). Get the pairing code "
+                          "from Admin > Vendos > Add Vendo"
+                          + (" (type: Charging Station)." if charging else "."))
             elif ok and self._flash_erased:
                 self._log("Fresh start: the NodeMCU formats its storage on this first boot (a few "
                           "seconds), then opens the \"ZxheiFi-Setup\" WiFi for the Setup Wizard.")
