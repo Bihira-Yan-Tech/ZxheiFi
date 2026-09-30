@@ -216,6 +216,12 @@ void sendNextSale() {
     saleSendFailed = true;
     return;
   }
+  if (code == 400) {   // the main unit will never accept this record - don't let it block the rest
+    Serial.printf("Sale #%u (PHP %u) rejected by the main unit - dropped\n", r.seq, r.peso);
+    sales.pop();
+    saleSendFailed = false;
+    return;
+  }
   if (code == 200 && (resp["n"] | 0UL) == n && (resp["ok"] | false)) {
     sales.pop();
     lastPollOkMs = millis();

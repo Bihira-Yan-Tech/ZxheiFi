@@ -176,6 +176,12 @@ void sendNextCoin() {
     coinSendFailed = true;
     return;
   }
+  if (code == 400) {   // the main unit will never accept this record - don't let it block the rest
+    Serial.printf("Coin #%u (PHP %u) rejected by the main unit - dropped\n", c.seq, c.peso);
+    coinQueue.pop();
+    coinSendFailed = false;
+    return;
+  }
   if (code == 200 && (resp["n"] | 0UL) == n && (resp["ok"] | false)) {
     coinQueue.pop();
     lastPollOkMs = millis();

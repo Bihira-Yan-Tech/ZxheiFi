@@ -1107,7 +1107,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "wrong_type"})
                 return
             seq, peso, rid = body.get("seq"), body.get("peso"), body.get("rid", 0)
-            if not (is_int(seq) and is_int(peso) and is_int(rid)) or seq < 1 or rid < 0 or not 1 <= peso <= 1000:
+            if not (is_int(seq) and is_int(peso) and is_int(rid)) or seq < 1 or rid < 0 or not 1 <= peso <= 5000:
                 self._json(400, {"error": "bad_coin"})
                 return
             if seq <= v["lastCoinSeq"]:
@@ -1129,7 +1129,7 @@ class Handler(BaseHTTPRequestHandler):
             seq, peso = body.get("seq"), body.get("peso")
             port, minutes = body.get("port"), body.get("minutes", 0)
             if not (is_int(seq) and is_int(peso) and is_int(port) and is_int(minutes)) or seq < 1 \
-                    or not 1 <= peso <= 1000 or not 0 <= port <= v["ports"] or not 0 <= minutes <= 2880:
+                    or not 1 <= peso <= 10000 or not 0 <= port <= 4 or not 0 <= minutes <= 1000000:
                 self._json(400, {"error": "bad_charge"})
                 return
             if seq <= v["lastCoinSeq"]:

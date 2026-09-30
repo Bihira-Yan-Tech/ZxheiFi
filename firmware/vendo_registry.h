@@ -247,7 +247,7 @@ public:
   }
 
   bool save() {
-    return saveJsonArray(VENDOS_FILE, _vendos.size(), 512, [this](size_t i, JsonObject o) {
+    return saveJsonArray(VENDOS_FILE, _vendos.size(), 768, [this](size_t i, JsonObject o) {
       Vendo& v = _vendos[i];
       o["id"] = v.id;
       o["name"] = v.name;
@@ -282,7 +282,7 @@ private:
   void load() {
     _vendos.clear();
     _vendos.reserve(MAX_SUB_VENDOS + 1);
-    loadJsonArray(VENDOS_FILE, 512, [this](JsonObject o) {
+    loadJsonArray(VENDOS_FILE, 768, [this](JsonObject o) {
       int id = o["id"] | -1;
       if (id < 0 || id > MAX_SUB_VENDOS || find((uint8_t)id) || _vendos.size() >= MAX_SUB_VENDOS + 1) return;
       Vendo v;

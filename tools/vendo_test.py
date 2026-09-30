@@ -240,7 +240,7 @@ def test_coin_dedupe_and_box():
     check("box counted once", vendo(list_vendos(), 1)["boxTotal"] == 10, vendo(list_vendos(), 1))
     st, d, _ = sub.send_coin({"seq": 2, "peso": 0, "rid": 0})
     check("zero-peso coin -> 400", st == 400 and d.get("error") == "bad_coin", f"{st} {d}")
-    st, d, _ = sub.send_coin({"seq": 3, "peso": 5000, "rid": 0})
+    st, d, _ = sub.send_coin({"seq": 3, "peso": 50000, "rid": 0})
     check("absurd coin -> 400", st == 400, f"{st} {d}")
 
 
@@ -481,6 +481,12 @@ def test_charging_sale():
     check("zero peso -> 400", st == 400 and d.get("error") == "bad_charge", f"{st} {d}")
     st, d, _ = box.charge(10, 5, 60)
     check("port 5 -> 400", st == 400 and d.get("error") == "bad_charge", f"{st} {d}")
+    admin_post("/api/admin/vendos/update", {"id": 1, "ports": 2})
+    st, d, _ = box.charge(10, 4, 60)
+    check("a port-4 sale queued before the box was cut to 2 ports is still accepted",
+          st == 200 and d.get("ok") is True, f"{st} {d}")
+    st, d, _ = box.charge(1000, 1, 7500)
+    check("big fallback-priced sale accepted (never blocks the queue)", st == 200 and d.get("ok") is True, f"{st} {d}")
 
 
 def test_charging_type_rules():

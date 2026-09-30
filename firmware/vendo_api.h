@@ -307,7 +307,9 @@ private:
     long seq = in["seq"] | 0L;
     long peso = in["peso"] | 0L;
     long rid = in["rid"] | 0L;
-    if (seq < 1 || rid < 0 || peso < 1 || peso > 1000) { _gui->replyError(400, "bad_coin"); return; }
+    // Wide limits on purpose: a record the box can never get accepted would
+    // block every sale queued behind it (50 pulses x PHP100 = 5000 max).
+    if (seq < 1 || rid < 0 || peso < 1 || peso > 5000) { _gui->replyError(400, "bad_coin"); return; }
     DynamicJsonDocument out(96);
     out["n"] = n;
     out["ok"] = true;
@@ -346,7 +348,9 @@ private:
     long peso = in["peso"] | 0L;
     long port = in["port"] | -1L;
     long minutes = in["minutes"] | 0L;
-    if (seq < 1 || peso < 1 || peso > 1000 || port < 0 || port > v->ports || minutes < 0 || minutes > 2880) {
+    // Wide limits on purpose (see handleCoin); any port 1-4 is accepted - the
+    // admin may have reduced the port count after the sale was queued.
+    if (seq < 1 || peso < 1 || peso > 10000 || port < 0 || port > 4 || minutes < 0 || minutes > 1000000) {
       _gui->replyError(400, "bad_charge");
       return;
     }
