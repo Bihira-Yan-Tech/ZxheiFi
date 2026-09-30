@@ -121,6 +121,45 @@ class SubSim:
         return results
 
 
+class ChargeSim(SubSim):
+    """A Charging Station box: reports port times in its polls, carries
+    out admin Stops (acknowledging them) and sends charging sales."""
+
+    def __init__(self, host="127.0.0.1", port=8098, mac="AA:BB:CC:DD:EE:C1"):
+        super().__init__(host, port, mac)
+        self.ports = [0, 0, 0, 0]   # remaining seconds per port
+        self.last_stop_id = 0
+        self.stopped = []           # ports stopped by the admin
+
+    def poll(self):
+        n = self.next_n()
+        status, data, ok = self.raw_post("/api/vendo/poll",
+                                         {"v": self.vid, "n": n, "ports": self.ports, "ackStop": self.last_stop_id},
+                                         self.key)
+        if status == 200 and ok and data.get("n") == n:
+            for stop in data.get("stop", []):
+                if stop["id"] > self.last_stop_id:
+                    if 1 <= stop["port"] <= len(self.ports):
+                        self.ports[stop["port"] - 1] = 0
+                    self.stopped.append(stop["port"])
+                    self.last_stop_id = stop["id"]
+            if data.get("cfgVer", self.cfg_ver) != self.cfg_ver:
+                self.fetch_config()
+        return status, data, ok
+
+    def charge(self, peso, port, minutes, seq=None):
+        """A charging sale (queued then sent, like the real box)."""
+        if seq is None:
+            self.seq += 1
+            seq = self.seq
+        if 1 <= port <= len(self.ports):
+            self.ports[port - 1] += minutes * 60
+        n = self.next_n()
+        return self.raw_post("/api/vendo/charge",
+                             {"v": self.vid, "n": n, "seq": seq, "peso": peso, "port": port, "minutes": minutes},
+                             self.key)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")

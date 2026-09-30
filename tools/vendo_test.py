@@ -23,7 +23,7 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS_DIR))
 import zx_protocol as zx  # noqa: E402
-from sub_sim import SubSim  # noqa: E402
+from sub_sim import ChargeSim, SubSim  # noqa: E402
 
 PORT = 8098
 PASS, FAIL = [], []
@@ -431,7 +431,150 @@ def test_main_sales_by_vendo():
     check("main unit sales under vendo 0", today_by_vendo() == {0: 20}, today_by_vendo())
 
 
+# ---------------------------------------------------------------- Charging (part 2)
+
+def charging_box(name="Kanto Charging", mac="AA:BB:CC:DD:EE:C1"):
+    st, d = admin_post("/api/admin/vendos/add", {"name": name, "type": "charging"})
+    box = ChargeSim(port=PORT, mac=mac)
+    box.pair(d.get("code", ""))
+    return box
+
+
+def get_settings():
+    return admin_get("/api/admin/settings")[1]
+
+
+def test_charging_pairing_and_config():
+    st, d = admin_post("/api/admin/vendos/add", {"name": "X", "type": "toaster"})
+    check("unknown vendo type -> 400 bad_type", st == 400 and d.get("error") == "bad_type", f"{st} {d}")
+    box = charging_box()
+    cfg = box.config
+    check("charging box paired", box.vid == 1 and box.key is not None, box.last)
+    check("config says charging with 4 ports", cfg.get("type") == "charging" and cfg.get("ports") == 4
+          and cfg.get("portActiveHigh") is False, cfg)
+    check("config carries rates, max and language",
+          cfg.get("rates") == [{"peso": 5, "minutes": 30}, {"peso": 10, "minutes": 60}, {"peso": 20, "minutes": 150}]
+          and cfg.get("maxMinutes") == 180 and cfg.get("lang") == "tl", cfg)
+    v = vendo(list_vendos(), 1)
+    check("list shows type + ports", v and v["type"] == "charging" and v["ports"] == 4, v)
+    wifi = paired_sub("Tindahan", mac="AA:BB:CC:DD:EE:02")
+    check("wifi box config says wifi", wifi.config.get("type") == "wifi" and "rates" not in wifi.config, wifi.config)
+
+
+def test_charging_sale():
+    box = charging_box()
+    st, d, ok = box.charge(10, 2, 60)
+    check("charge sale -> ok", st == 200 and d.get("ok") is True and ok, f"{st} {d}")
+    today = admin_get("/api/admin/sales")[1]["today"]
+    check("chargingRevenue counted", today.get("chargingRevenue") == 10, today)
+    check("coinRevenue untouched", today.get("coinRevenue") == 0, today)
+    check("byVendo has the charging box", today_by_vendo() == {1: 10}, today_by_vendo())
+    check("box total counts it", vendo(list_vendos(), 1)["boxTotal"] == 10)
+    st, d, ok = box.charge(10, 2, 60, seq=1)
+    check("resent charge -> dup, counted once", d.get("dup") is True and today_by_vendo() == {1: 10}, f"{st} {d}")
+    logs = [e for e in admin_get("/api/admin/logs")[1] if e["type"] == "charge"]
+    check("charge logged with port + minutes", logs and "port 2" in logs[-1]["detail"] and "60 min" in logs[-1]["detail"], logs)
+    box.charge(5, 0, 0)
+    logs = [e["type"] for e in admin_get("/api/admin/logs")[1]]
+    check("port-0 sale logged as charge_unclaimed", "charge_unclaimed" in logs, logs)
+    st, d, _ = box.charge(0, 1, 30)
+    check("zero peso -> 400", st == 400 and d.get("error") == "bad_charge", f"{st} {d}")
+    st, d, _ = box.charge(10, 5, 60)
+    check("port 5 -> 400", st == 400 and d.get("error") == "bad_charge", f"{st} {d}")
+
+
+def test_charging_type_rules():
+    box = charging_box()
+    wifi = paired_sub("Tindahan", mac="AA:BB:CC:DD:EE:02")
+    st, d, _ = box.send_coin({"seq": 1, "peso": 10, "rid": 0})
+    check("coin from a charging box -> 400 wrong_type", st == 400 and d.get("error") == "wrong_type", f"{st} {d}")
+    wifi.seq += 1
+    n = wifi.next_n()
+    st, d, _ = wifi.raw_post("/api/vendo/charge", {"v": wifi.vid, "n": n, "seq": 1, "peso": 10, "port": 1,
+                                                  "minutes": 60}, wifi.key)
+    check("charge from a wifi box -> 400 wrong_type", st == 400 and d.get("error") == "wrong_type", f"{st} {d}")
+    box.poll()
+    st, d = start_coin(1)
+    check("Insert Coin on a charging box -> 404", st == 404 and d.get("error") == "vendo_unknown", f"{st} {d}")
+    names = [v["name"] for v in request("GET", "/api/branding")[1]["vendos"]]
+    check("branding lists wifi boxes only", names == ["Main", "Tindahan"], names)
+
+
+def test_charging_stop():
+    box = charging_box()
+    box.charge(10, 2, 60)
+    box.poll()
+    st, d = admin_post("/api/admin/vendos/stop", {"id": 1, "port": 2}, STAFF)
+    check("staff can Stop a port", st == 200, f"{st} {d}")
+    box.poll()
+    check("the box received and applied the Stop", box.stopped == [2] and box.ports[1] == 0, (box.stopped, box.ports))
+    box.poll()
+    check("acknowledged Stop is not sent again", box.stopped == [2], box.stopped)
+    st, d = admin_post("/api/admin/vendos/stop", {"id": 1, "port": 5})
+    check("Stop bad port -> 400", st == 400 and d.get("error") == "bad_port", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/stop", {"id": 0, "port": 1})
+    check("Stop on a non-charging vendo -> 400", st == 400 and d.get("error") == "not_charging", f"{st} {d}")
+    logs = [e["type"] for e in admin_get("/api/admin/logs")[1]]
+    check("charge_stop logged", "charge_stop" in logs, logs)
+
+
+def test_charging_port_status():
+    box = charging_box()
+    box.charge(10, 1, 60)
+    box.poll()
+    v = vendo(list_vendos(), 1)
+    check("list shows port seconds from the poll", v.get("portSecs", [])[:2] == [3600, 0], v)
+
+
+def test_charging_settings():
+    s = get_settings()
+    check("settings default charging rates",
+          s.get("chargeRates") == [{"peso": 5, "minutes": 30}, {"peso": 10, "minutes": 60}, {"peso": 20, "minutes": 150}]
+          and s.get("chargeMaxMinutes") == 180 and s.get("chargeLang") == "tl", s)
+    box = charging_box()
+    box.poll()
+    before = box.cfg_ver
+    st, d = admin_post("/api/admin/settings", {"chargeRates": [{"peso": 5, "minutes": 40}], "chargeMaxMinutes": 120,
+                                               "chargeLang": "en"})
+    check("save charging settings -> 200", st == 200, f"{st} {d}")
+    box.poll()
+    check("charging box refetched its config", box.cfg_ver != before and box.config.get("rates") == [
+        {"peso": 5, "minutes": 40}] and box.config.get("maxMinutes") == 120 and box.config.get("lang") == "en",
+          box.config)
+    for body, err in (({"chargeRates": [{"peso": 5, "minutes": 30}, {"peso": 5, "minutes": 60}]}, "bad_charge_rates"),
+                      ({"chargeRates": [{"peso": 0, "minutes": 30}]}, "bad_charge_rates"),
+                      ({"chargeRates": [{"peso": 5, "minutes": 2000}]}, "bad_charge_rates"),
+                      ({"chargeRates": [{"peso": i + 1, "minutes": 10} for i in range(11)]}, "bad_charge_rates"),
+                      ({"chargeMaxMinutes": 5}, "bad_charge_max"),
+                      ({"chargeLang": "jp"}, "bad_charge_lang")):
+        st, d = admin_post("/api/admin/settings", body)
+        check(f"invalid charging setting -> {err}", st == 400 and d.get("error") == err, f"{body} -> {st} {d}")
+
+
+def test_charging_edit_and_limit():
+    box = charging_box()
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "ports": 2, "portActiveHigh": True})
+    check("edit ports + relay level -> 200", st == 200, f"{st} {d}")
+    box.poll()
+    check("box got ports=2", box.config.get("ports") == 2 and box.config.get("portActiveHigh") is True, box.config)
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "ports": 5})
+    check("ports 5 -> 400", st == 400 and d.get("error") == "bad_ports", f"{st} {d}")
+    st, d = admin_post("/api/admin/vendos/update", {"id": 1, "coinPin": "D1"})
+    check("charging coin pin on the I2C bus -> 400", st == 400 and d.get("error") == "invalid_pin", f"{st} {d}")
+    paired_sub("S1", mac="AA:BB:CC:DD:EE:02")
+    paired_sub("S2", mac="AA:BB:CC:DD:EE:03")
+    _, st, d = add_code("Fourth")
+    check("charging + wifi boxes share the limit", st == 409 and d.get("error") == "vendo_limit", f"{st} {d}")
+
+
 TESTS = [
+    test_charging_pairing_and_config,
+    test_charging_sale,
+    test_charging_type_rules,
+    test_charging_stop,
+    test_charging_port_status,
+    test_charging_settings,
+    test_charging_edit_and_limit,
     test_branding_lists_vendos,
     test_offline_sub_refused,
     test_two_boxes_at_once_and_sub_coin_flow,
@@ -460,7 +603,7 @@ TESTS = [
 
 # ---------------------------------------------------------------- runner
 
-def wait_for_server(timeout_sec=10):
+def wait_for_server(timeout_sec=40):   # a busy PC can take >10 s to start Python
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
@@ -474,7 +617,15 @@ def wait_for_server(timeout_sec=10):
     return False
 
 
+_run_count = [0]
+
+
 def run_one(test):
+    # A fresh port per test: on Windows the previous server's port can
+    # still be held for a moment after it exits.
+    global PORT
+    PORT = 8100 + (_run_count[0] % 60)
+    _run_count[0] += 1
     # Server errors go to a file, not a pipe: an unread pipe fills up after a
     # few tracebacks and freezes the server mid-test.
     log_path = Path(tempfile.gettempdir()) / f"zx_vendo_test_{PORT}.log"

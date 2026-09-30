@@ -82,7 +82,8 @@ blocked_macs = []  # mirrors AdminAPI::blockedMacs - display/record only, no rea
 admin_stats = {
     "usersToday": 0, "coinRevenueToday": 0.0, "voucherRevenueToday": 0.0,
     "subscriptionRevenueToday": 0.0, "dataUsedTodayBytes": 0,
-    "coinByVendo": {},  # vendo id -> coin pesos today (mirrors AdminAPI::coinByVendoToday)
+    "coinByVendo": {},  # vendo id -> pesos today, coins + charging (mirrors AdminAPI::coinByVendoToday)
+    "chargingRevenueToday": 0.0,
 }
 settings = {
     "nightPromoEnabled": True, "idleTimeoutMin": 5, "autoRebootTime": "03:00",
@@ -97,7 +98,11 @@ settings = {
     "announcement": "",
     "coinPin": "D5", "relayPin": "D7", "relayActiveHigh": True, "coinPulseValue": 1,
     "telegramEnabled": False, "telegramBotToken": "", "telegramChatId": "",
+    # v2 Charging Station (mirrors AdminAPI::chargeRates/chargeMaxMinutes/chargeLang)
+    "chargeRates": [{"peso": 5, "minutes": 30}, {"peso": 10, "minutes": 60}, {"peso": 20, "minutes": 150}],
+    "chargeMaxMinutes": 180, "chargeLang": "tl",
 }
+CHARGE_CFG = {"ver": 0}   # bumped when Settings > Charging changes; added to each charging box's cfgVer
 
 
 # Coin sessions - mirrors firmware/coin_slot.h: one reservation slot per
@@ -166,6 +171,12 @@ def coin_credit(s, peso):
 
 def add_coin_revenue(vid, peso):
     admin_stats["coinRevenueToday"] += peso
+    by = admin_stats["coinByVendo"]
+    by[vid] = by.get(vid, 0) + peso
+
+
+def add_charge_revenue(vid, peso):
+    admin_stats["chargingRevenueToday"] += peso
     by = admin_stats["coinByVendo"]
     by[vid] = by.get(vid, 0) + peso
 
@@ -265,10 +276,25 @@ collections = []     # oldest first, capped at MAX_COLLECTIONS
 pair_failures = []   # timestamps of failed /api/vendo/pair attempts (rate limit)
 
 
-def new_sub_vendo(vid, name):
-    return {"id": vid, "name": name, "boxTotal": 0, "commissionPct": 0, "mac": "", "key": None,
+VENDO_TYPES = ("wifi", "charging")
+CHARGING_PINS = ("D5", "D6", "D7")   # D1/D2 are the charging box's I2C bus
+
+
+def new_sub_vendo(vid, name, vtype="wifi"):
+    return {"id": vid, "name": name, "type": vtype, "boxTotal": 0, "commissionPct": 0, "mac": "", "key": None,
             "lastCoinSeq": 0, "coinPin": "D5", "relayPin": "D7", "relayActiveHigh": True,
-            "pesosPerPulse": 1, "cfgVer": 1, "lastSeen": 0.0, "lastN": None, "offlineLogged": False}
+            "pesosPerPulse": 1, "cfgVer": 1, "lastSeen": 0.0, "lastN": None, "offlineLogged": False,
+            # charging boxes only
+            "ports": 4, "portActiveHigh": False, "portSecs": [0, 0, 0, 0], "portSecsAt": 0.0,
+            "stops": [], "stopSeq": 0}
+
+
+def is_charging(v):
+    return v.get("type") == "charging"
+
+
+def effective_cfg_ver(v):
+    return v["cfgVer"] + (CHARGE_CFG["ver"] if is_charging(v) else 0)
 
 
 def vendo_online(v):
@@ -288,7 +314,7 @@ def free_vendo_id():
     return next((i for i in range(1, MAX_SUB_VENDOS + 1) if i not in taken), 0)
 
 
-def add_pending(name, target_id=0):
+def add_pending(name, target_id=0, vtype="wifi"):
     expire_pending()
     if len(pending_pairs) >= zx.MAX_PENDING_PAIRS:
         return None, "too_many_pending"
@@ -296,17 +322,24 @@ def add_pending(name, target_id=0):
     if not target_id and (len(vendos) - 1) + new_ones >= MAX_SUB_VENDOS:
         return None, "vendo_limit"
     code = zx.new_pair_code()
-    pending_pairs.append({"code": code, "name": name, "createdAt": mock_now(), "targetId": target_id})
+    pending_pairs.append({"code": code, "name": name, "createdAt": mock_now(), "targetId": target_id,
+                          "type": vtype})
     return code, ""
 
 
 def vendo_config(v):
-    return {"cfgVer": v["cfgVer"], "name": v["name"], "coinPin": v["coinPin"], "relayPin": v["relayPin"],
-            "relayActiveHigh": v["relayActiveHigh"], "pesosPerPulse": v["pesosPerPulse"]}
+    cfg = {"cfgVer": effective_cfg_ver(v), "name": v["name"], "type": v.get("type", "wifi"),
+           "coinPin": v["coinPin"], "relayPin": v["relayPin"],
+           "relayActiveHigh": v["relayActiveHigh"], "pesosPerPulse": v["pesosPerPulse"]}
+    if is_charging(v):
+        cfg.update(ports=v["ports"], portActiveHigh=v["portActiveHigh"],
+                   rates=[dict(r) for r in settings["chargeRates"]],
+                   maxMinutes=settings["chargeMaxMinutes"], lang=settings["chargeLang"])
+    return cfg
 
 
 def vendo_view(v):
-    out = {"id": v["id"], "name": v["name"], "online": vendo_online(v),
+    out = {"id": v["id"], "name": v["name"], "type": v.get("type", "wifi"), "online": vendo_online(v),
            "todayPeso": admin_stats["coinByVendo"].get(v["id"], 0),
            "boxTotal": v["boxTotal"], "commissionPct": v["commissionPct"],
            "paired": v["id"] == 0 or v.get("key") is not None}
@@ -314,6 +347,11 @@ def vendo_view(v):
         out["lastSeenSec"] = int(mock_now() - v["lastSeen"]) if v.get("lastSeen") else -1
         for k in ("coinPin", "relayPin", "relayActiveHigh", "pesosPerPulse"):
             out[k] = v[k]
+        if is_charging(v):
+            out["ports"] = v["ports"]
+            out["portActiveHigh"] = v["portActiveHigh"]
+            out["portSecs"] = v["portSecs"][:v["ports"]]
+            out["portSecsAgoSec"] = int(mock_now() - v["portSecsAt"]) if v["portSecsAt"] else -1
     return out
 
 
@@ -551,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                               # Coin boxes the customer can pick (paired ones only).
                               "vendos": [{"id": v["id"], "name": v["name"], "online": vendo_online(v)}
                                          for i, v in sorted(vendos.items())
-                                         if i == 0 or v.get("key") is not None]})
+                                         if i == 0 or (v.get("key") is not None and not is_charging(v))]})
         elif path == "/api/status":
             sid = (qs.get("session") or [""])[0]
             s = sessions.get(sid)
@@ -626,6 +664,7 @@ class Handler(BaseHTTPRequestHandler):
                 "coinRevenue": admin_stats["coinRevenueToday"],
                 "voucherRevenue": admin_stats["voucherRevenueToday"],
                 "subscriptionRevenue": admin_stats["subscriptionRevenueToday"],
+                "chargingRevenue": admin_stats["chargingRevenueToday"],
                 "users": admin_stats["usersToday"],
                 "dataUsedBytes": admin_stats["dataUsedTodayBytes"],
                 "byVendo": [{"id": k, "peso": v} for k, v in sorted(admin_stats["coinByVendo"].items())],
@@ -636,7 +675,7 @@ class Handler(BaseHTTPRequestHandler):
             if not admin:
                 return
             revenue_today = (admin_stats["coinRevenueToday"] + admin_stats["voucherRevenueToday"]
-                              + admin_stats["subscriptionRevenueToday"])
+                              + admin_stats["subscriptionRevenueToday"] + admin_stats["chargingRevenueToday"])
             self._json(200, {
                 "totalUsers": admin_stats["usersToday"],
                 "activeSessions": len(sessions),
@@ -645,6 +684,7 @@ class Handler(BaseHTTPRequestHandler):
                 "coinRevenueToday": admin_stats["coinRevenueToday"],
                 "voucherRevenueToday": admin_stats["voucherRevenueToday"],
                 "subscriptionRevenueToday": admin_stats["subscriptionRevenueToday"],
+                "chargingRevenueToday": admin_stats["chargingRevenueToday"],
                 "unusedVouchers": sum(1 for v in vouchers.values() if not v["used"]),
                 "mikrotik": True,
                 "role": admin["role"],
@@ -1032,11 +1072,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(409, {"error": "vendo_limit"})
                 return
             k0 = zx.pair_key(match["code"])
-            v = vendos.get(vid) or new_sub_vendo(vid, match["name"])
+            v = vendos.get(vid) or new_sub_vendo(vid, match["name"], match.get("type", "wifi"))
             vendos[vid] = v
             v.update(mac=mac, key=zx.vendo_key(k0, vid, mac, nonce), lastN=None, lastSeen=mock_now(),
                      offlineLogged=False)
-            slots.setdefault(vid, new_slot())
+            if not is_charging(v):
+                slots.setdefault(vid, new_slot())
             log_event("vendo_paired", f"{v['name']} ({mac})")
             self._signed(200, {"vendoId": vid, "name": v["name"], "nonce": nonce,
                                "lastCoinSeq": v["lastCoinSeq"], "config": vendo_config(v)}, k0)
@@ -1044,12 +1085,26 @@ class Handler(BaseHTTPRequestHandler):
             v, body, n = self._auth_vendo()
             if not v:
                 return
+            if is_charging(v):
+                ports = body.get("ports")
+                if isinstance(ports, list) and len(ports) <= 4 and all(is_int(p) and p >= 0 for p in ports):
+                    v["portSecs"] = (ports + [0, 0, 0, 0])[:4]
+                    v["portSecsAt"] = mock_now()
+                ack = body.get("ackStop", 0)
+                if is_int(ack):
+                    v["stops"] = [st for st in v["stops"] if st["id"] > ack]
+                self._signed(200, {"n": n, "relay": False, "rid": 0, "fast": False, "cfgVer": effective_cfg_ver(v),
+                                   "name": v["name"], "stop": [dict(st) for st in v["stops"]]}, v["key"])
+                return
             s = slots[v["id"]]
             self._signed(200, {"n": n, "relay": s["reserved"], "rid": s["rid"] if s["reserved"] else 0,
                                "fast": s["reserved"], "cfgVer": v["cfgVer"], "name": v["name"]}, v["key"])
         elif path == "/api/vendo/coin":
             v, body, n = self._auth_vendo()
             if not v:
+                return
+            if is_charging(v):
+                self._json(400, {"error": "wrong_type"})
                 return
             seq, peso, rid = body.get("seq"), body.get("peso"), body.get("rid", 0)
             if not (is_int(seq) and is_int(peso) and is_int(rid)) or seq < 1 or rid < 0 or not 1 <= peso <= 1000:
@@ -1064,6 +1119,30 @@ class Handler(BaseHTTPRequestHandler):
             v["boxTotal"] += peso
             vendo_coin(v["id"], peso, rid)
             self._signed(200, {"n": n, "ok": True}, v["key"])
+        elif path == "/api/vendo/charge":
+            v, body, n = self._auth_vendo()
+            if not v:
+                return
+            if not is_charging(v):
+                self._json(400, {"error": "wrong_type"})
+                return
+            seq, peso = body.get("seq"), body.get("peso")
+            port, minutes = body.get("port"), body.get("minutes", 0)
+            if not (is_int(seq) and is_int(peso) and is_int(port) and is_int(minutes)) or seq < 1 \
+                    or not 1 <= peso <= 1000 or not 0 <= port <= v["ports"] or not 0 <= minutes <= 2880:
+                self._json(400, {"error": "bad_charge"})
+                return
+            if seq <= v["lastCoinSeq"]:
+                self._signed(200, {"n": n, "ok": True, "dup": True}, v["key"])
+                return
+            v["lastCoinSeq"] = seq
+            v["boxTotal"] += peso
+            add_charge_revenue(v["id"], peso)
+            if port:
+                log_event("charge", f"{v['name']}: PHP {peso} = {minutes} min, port {port}")
+            else:
+                log_event("charge_unclaimed", f"{v['name']}: PHP {peso} never assigned to a port - counted in sales")
+            self._signed(200, {"n": n, "ok": True}, v["key"])
         elif path == "/api/vendo/config":
             v, body, n = self._auth_vendo()
             if not v:
@@ -1072,11 +1151,16 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/admin/vendos/add":
             if not self._require_admin(require_super=True):
                 return
-            name = clean_name((self._read_json_body() or {}).get("name"))
+            body = self._read_json_body() or {}
+            name = clean_name(body.get("name"))
             if not name:
                 self._json(400, {"error": "bad_name"})
                 return
-            code, err = add_pending(name)
+            vtype = body.get("type", "wifi")
+            if vtype not in VENDO_TYPES:
+                self._json(400, {"error": "bad_type"})
+                return
+            code, err = add_pending(name, vtype=vtype)
             if err:
                 self._json(409, {"error": err, "limit": MAX_SUB_VENDOS, "board": BOARD})
                 return
@@ -1106,7 +1190,18 @@ class Handler(BaseHTTPRequestHandler):
                 relay_pin = body.get("relayPin", v["relayPin"])
                 pulse = body.get("pesosPerPulse", v["pesosPerPulse"])
                 active_high = body.get("relayActiveHigh", v["relayActiveHigh"])
-                if coin_pin not in VENDO_PINS or (relay_pin != "none" and relay_pin not in VENDO_PINS):
+                allowed = CHARGING_PINS if is_charging(v) else VENDO_PINS
+                ports, port_high = v["ports"], v["portActiveHigh"]
+                if is_charging(v):
+                    ports = body.get("ports", ports)
+                    port_high = body.get("portActiveHigh", port_high)
+                    if not is_int(ports) or not 1 <= ports <= 4:
+                        self._json(400, {"error": "bad_ports"})
+                        return
+                    if not isinstance(port_high, bool):
+                        self._json(400, {"error": "bad_relay_level"})
+                        return
+                if coin_pin not in allowed or (relay_pin != "none" and relay_pin not in allowed):
                     self._json(400, {"error": "invalid_pin"})
                     return
                 if coin_pin == relay_pin:
@@ -1118,9 +1213,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(active_high, bool):
                     self._json(400, {"error": "bad_relay_level"})
                     return
-                changed = (name, coin_pin, relay_pin, pulse, active_high) != \
-                    (v["name"], v["coinPin"], v["relayPin"], v["pesosPerPulse"], v["relayActiveHigh"])
-                v.update(coinPin=coin_pin, relayPin=relay_pin, pesosPerPulse=pulse, relayActiveHigh=active_high)
+                changed = (name, coin_pin, relay_pin, pulse, active_high, ports, port_high) != \
+                    (v["name"], v["coinPin"], v["relayPin"], v["pesosPerPulse"], v["relayActiveHigh"],
+                     v["ports"], v["portActiveHigh"])
+                v.update(coinPin=coin_pin, relayPin=relay_pin, pesosPerPulse=pulse, relayActiveHigh=active_high,
+                         ports=ports, portActiveHigh=port_high)
                 if changed:
                     v["cfgVer"] += 1
             v.update(name=name, commissionPct=commission)
@@ -1140,6 +1237,27 @@ class Handler(BaseHTTPRequestHandler):
             del collections[:-MAX_COLLECTIONS]
             log_event("vendo_collected", f"{v['name']} PHP {amount} by {admin['username']}")
             self._json(200, {"collected": amount})
+        elif path == "/api/admin/vendos/stop":
+            admin = self._require_admin()
+            if not admin:
+                return
+            body = self._read_json_body() or {}
+            v = vendos.get(body.get("id")) if is_int(body.get("id")) else None
+            if not v:
+                self._json(404, {"error": "vendo_unknown"})
+                return
+            if not is_charging(v):
+                self._json(400, {"error": "not_charging"})
+                return
+            port = body.get("port")
+            if not is_int(port) or not 1 <= port <= v["ports"]:
+                self._json(400, {"error": "bad_port"})
+                return
+            v["stopSeq"] += 1
+            v["stops"].append({"id": v["stopSeq"], "port": port})
+            left = v["portSecs"][port - 1] // 60
+            log_event("charge_stop", f"{v['name']} port {port} stopped by {admin['username']} (~{left} min left)")
+            self._json(200, {"ok": True})
         elif path == "/api/admin/vendos/remove":
             if not self._require_admin(require_super=True):
                 return
@@ -1168,7 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "vendo_unknown"})
                 return
             pending_pairs[:] = [p for p in pending_pairs if p["targetId"] != vid]
-            code, err = add_pending(v["name"], target_id=vid)
+            code, err = add_pending(v["name"], target_id=vid, vtype=v.get("type", "wifi"))
             if err:
                 self._json(409, {"error": err, "limit": MAX_SUB_VENDOS, "board": BOARD})
                 return
@@ -1274,9 +1392,30 @@ class Handler(BaseHTTPRequestHandler):
             if not 1 <= int(body.get("coinPulseValue", settings["coinPulseValue"])) <= 100:
                 self._json(400, {"error": "invalid_pulse_value"})
                 return
+            # Settings > Charging (same rules as GUIHandler::parseChargeSettings)
+            charge_rates = body.get("chargeRates", settings["chargeRates"])
+            pesos = [r.get("peso") for r in charge_rates] if isinstance(charge_rates, list) else None
+            if pesos is None or len(charge_rates) > 10 or len(set(pesos)) != len(pesos) or not all(
+                    isinstance(r, dict) and is_int(r.get("peso")) and is_int(r.get("minutes"))
+                    and 1 <= r["peso"] <= 1000 and 1 <= r["minutes"] <= 1440 for r in charge_rates):
+                self._json(400, {"error": "bad_charge_rates"})
+                return
+            charge_max = body.get("chargeMaxMinutes", settings["chargeMaxMinutes"])
+            if not is_int(charge_max) or not 10 <= charge_max <= 1440:
+                self._json(400, {"error": "bad_charge_max"})
+                return
+            charge_lang = body.get("chargeLang", settings["chargeLang"])
+            if charge_lang not in ("tl", "en"):
+                self._json(400, {"error": "bad_charge_lang"})
+                return
+            charge_rates = [{"peso": r["peso"], "minutes": r["minutes"]} for r in charge_rates]
+            if (charge_rates, charge_max, charge_lang) != \
+                    (settings["chargeRates"], settings["chargeMaxMinutes"], settings["chargeLang"]):
+                CHARGE_CFG["ver"] += 1
             settings.update({k: body[k] for k in settings if k in body})
             settings["speedProfiles"] = [dict(sp, id=str(sp["id"])) for sp in speeds]
             settings["announcement"] = settings["announcement"][:300]
+            settings["chargeRates"] = charge_rates
             if "rateProfiles" in body:
                 rate_profiles.clear()
                 rate_profiles.extend(rates)
