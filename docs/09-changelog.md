@@ -1,5 +1,52 @@
 # 📝 Changelog
 
+## v2.0.0-dev - 2026-09-30 - Charging Station (part 2 of v2)
+
+Spec: `docs/superpowers/specs/2026-09-30-charging-station-design.md`;
+user guide: [15-charging-station.md](15-charging-station.md).
+
+- **Charging Station firmware** (`charging/`): a coin-op phone charger box.
+  - Hardware: 4 USB ports switched through a PCF8574 I2C expander, a button
+    per port, an optional SSD1306 OLED screen, and the coin acceptor.
+  - **The box runs the charging itself**, so it works with no WiFi or with
+    the main unit down.
+  - Every sale is queued in LittleFS (up to 100, then one combined overflow
+    record) and sent over the signed protocol until acknowledged.
+  - Port times survive power cuts (saved every 30 s and on change).
+  - Admin Stops arrive in poll replies and are acknowledged.
+  - Tagalog/English screens.
+- **`charging/charge_logic.h`**: all charging rules in pure C++, with 35 host
+  tests covering exact and fallback pricing, cap, top-up, window, held coins,
+  stop, power-cut resume and `millis()` wrap. They run on the PC via
+  `tools/run_host_tests.py`.
+- **`common/box/`**: the Sub Vendo's storage, record queue, Setup Wizard and
+  signed link moved here and generalized. Both boxes now share them, and the
+  Sub Vendo's behaviour is unchanged.
+- **Main unit:**
+  - vendo `type` (`wifi` / `charging`) and `POST /api/vendo/charge`;
+  - charging polls carry port times, and replies carry Stops;
+  - `POST /api/admin/vendos/stop`;
+  - Settings → **Charging** (rates, max per port, screen language), pushed to
+    every box through `cfgVer`;
+  - `chargingRevenue` in the daily sales, totals, Overview and CSV;
+  - `wrong_type` guards both ways; charging boxes are hidden from the customer
+    picker and count toward the box limit.
+- **Portal:**
+  - Add Vendo is now a form with **Type**;
+  - charging rows show `P1 libre · P2 23m` with **Stop**;
+  - Edit gets ports (1-4) and port relay HIGH/LOW, and blocks D1/D2 for the
+    coin pins;
+  - Settings → Charging section;
+  - a Sales **Charging** column.
+- **Setup Companion:** a third Device type, **Charging Station** (bundled
+  `.bin`), and an EN/TL Guide section.
+- **Tests:**
+  - `tools/vendo_test.py`: 133 checks, with `ChargeSim` in
+    `tools/sub_sim.py`, a per-test port, and a 40 s start-up allowance for a
+    busy PC;
+  - regression 103/103;
+  - host C++ tests all pass.
+
 ## v2.0.0-dev - 2026-09-26 - Vendos framework + Sub Vendo (part 1 of v2)
 
 Built on branch `v2` (folder `ZxheiFi-v2`); v1.0.0 on `main` is untouched.

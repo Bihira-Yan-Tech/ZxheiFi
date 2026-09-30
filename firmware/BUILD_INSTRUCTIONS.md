@@ -6,8 +6,11 @@ ZxheiFi has two firmwares:
 |---|---|---|
 | Main unit | `firmware/` | `firmware/zxheifi_firmware.bin` |
 | Sub Vendo (v2) | `subvendo/` | `subvendo/zxheifi_subvendo.bin` |
+| Charging Station (v2) | `charging/` | `charging/zxheifi_charging.bin` |
 
-Both include the shared protocol header `common/zx_protocol.h`.
+All three include the shared protocol header `common/zx_protocol.h`; the
+two boxes also share `common/box/` (settings storage, record queue, Setup
+Wizard, signed link).
 
 You normally don't need to build anything: both `.bin` files are
 committed and bundled in the Setup Companion.
@@ -17,6 +20,7 @@ committed and bundled in the Setup Companion.
 ```bash
 pio run -d firmware     # main unit  -> firmware/.pio/build/main_esp8266/firmware.bin
 pio run -d subvendo     # sub vendo  -> subvendo/.pio/build/sub_esp8266/firmware.bin
+pio run -d charging     # charging   -> charging/.pio/build/charging_esp8266/firmware.bin
 ```
 
 Copy each result over the committed `.bin` shown in the table above. Each
@@ -27,7 +31,7 @@ PlatformIO splits `${PROJECT_DIR}` on the spaces in this repo's path.
 ## Tests that need no hardware
 
 ```bash
-python tools/run_host_tests.py     # C++ protocol (zx_protocol.h) on the PC
+python tools/run_host_tests.py     # C++ on the PC: zx_protocol.h + the Charging Station's charge_logic.h
 python tools/test_zx_protocol.py   # Python reference, same vectors
 python tools/vendo_test.py         # sub-vendo API contract (mock server)
 python tools/regression_test.py    # v1 API contract (mock server)
@@ -51,8 +55,11 @@ afterwards.
 1. Install the ESP8266 board package (Boards Manager URL
    `http://arduino.esp8266.com/stable/package_esp8266com_index.json`) and
    ArduinoJson **6.x**.
-2. Copy `common/zx_protocol.h` into the sketch folder (`firmware/` or
-   `subvendo/`). The IDE doesn't know about `common/`.
+2. Copy `common/zx_protocol.h` - and, for the boxes, the whole `common/box/`
+   folder next to it - into the sketch folder (`firmware/`, `subvendo/` or
+   `charging/`), then change `#include "box/..."` paths if needed. The IDE
+   doesn't know about `common/`. The Charging Station also needs the
+   "ESP8266 and ESP32 OLED driver for SSD1306 displays" library (ThingPulse).
 3. Open `firmware/nodemcu_firmware.ino` (or `subvendo/subvendo.ino`) and set
    these options:
    - Board: "NodeMCU 1.0 (ESP-12E Module)"
@@ -68,10 +75,10 @@ the admin panel.
 
 - The main unit must stay under 900 KB (about 577 KB in 2.0.0-dev). The app
   partition is about 1,044,464 bytes.
-- The sub vendo is about 370 KB.
+- The sub vendo is about 370 KB and the charging station about 395 KB.
 
 ## Flashing
 
 Use the Setup Companion's Flash Firmware tab and choose the Device type:
-**Main unit** or **Sub Vendo**. Any esptool-based flasher also works: write
+**Main unit**, **Sub Vendo** or **Charging Station**. Any esptool-based flasher also works: write
 the `.bin` at offset 0x0.
