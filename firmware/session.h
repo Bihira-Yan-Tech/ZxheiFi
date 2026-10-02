@@ -11,7 +11,7 @@
 #define SESSION_H
 
 #include <Arduino.h>
-#include <FS.h>
+#include "platform.h"
 #include <ArduinoJson.h>
 #include "config.h"
 

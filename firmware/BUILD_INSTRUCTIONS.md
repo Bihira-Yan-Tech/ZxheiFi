@@ -1,10 +1,11 @@
 # Building the firmware
 
-ZxheiFi has three firmwares:
+ZxheiFi has three firmwares (the main unit's builds for two boards):
 
 | Firmware | Source | Output the Setup Companion flashes |
 |---|---|---|
-| Main unit | `firmware/` | `firmware/zxheifi_firmware.bin` |
+| Main unit - NodeMCU | `firmware/` (env `main_esp8266`) | `firmware/zxheifi_firmware.bin` |
+| Main unit - ESP32 DevKit | `firmware/` (env `main_esp32`) | `firmware/zxheifi_firmware_esp32.bin` |
 | Sub Vendo (v2) | `subvendo/` | `subvendo/zxheifi_subvendo.bin` |
 | Charging Station (v2) | `charging/` | `charging/zxheifi_charging.bin` |
 
@@ -12,13 +13,14 @@ All three include the shared protocol header `common/zx_protocol.h`; the
 two boxes also share `common/box/` (settings storage, record queue, Setup
 Wizard, signed link).
 
-You normally don't need to build anything: all three `.bin` files are
+You normally don't need to build anything: all the `.bin` files are
 committed and bundled in the Setup Companion.
 
 ## PlatformIO (recommended)
 
 ```bash
 pio run -d firmware     # main unit  -> firmware/.pio/build/main_esp8266/firmware.bin
+pio run -d firmware -e main_esp32 && python tools/merge_esp32.py   # -> firmware/zxheifi_firmware_esp32.bin
 pio run -d subvendo     # sub vendo  -> subvendo/.pio/build/sub_esp8266/firmware.bin
 pio run -d charging     # charging   -> charging/.pio/build/charging_esp8266/firmware.bin
 ```
@@ -31,7 +33,7 @@ PlatformIO splits `${PROJECT_DIR}` on the spaces in this repo's path.
 ## Tests that need no hardware
 
 ```bash
-python tools/run_host_tests.py     # C++ on the PC: zx_protocol.h + the Charging Station's charge_logic.h
+python tools/run_host_tests.py     # C++ on the PC: zx_protocol.h, charge_logic.h, backup_split.h
 python tools/test_zx_protocol.py   # Python reference, same vectors
 python tools/vendo_test.py         # sub vendo + charging station API contract (mock server)
 python tools/regression_test.py    # v1 API contract (mock server)
@@ -73,12 +75,13 @@ the admin panel.
 
 ## Size budget
 
-- The main unit must stay under 900 KB (about 577 KB in 2.0.0-dev). The app
-  partition is about 1,044,464 bytes.
+- The main unit must stay under 900 KB on a NodeMCU (about 590 KB in 2.0.0-dev); the
+  app partition is about 1,044,464 bytes. On an ESP32 (default.csv, OTA-ready) the app
+  slot is 1,310,720 bytes and the build is about 1.17 MB.
 - The sub vendo is about 370 KB and the charging station about 395 KB.
 
 ## Flashing
 
 Use the Setup Companion's Flash Firmware tab and choose the Device type:
-**Main unit**, **Sub Vendo** or **Charging Station**. Any esptool-based flasher also works: write
+**Main unit**, **Main unit (ESP32)**, **Sub Vendo** or **Charging Station**. Any esptool-based flasher also works: write
 the `.bin` at offset 0x0.

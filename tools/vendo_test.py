@@ -573,7 +573,108 @@ def test_charging_edit_and_limit():
     check("charging + wifi boxes share the limit", st == 409 and d.get("error") == "vendo_limit", f"{st} {d}")
 
 
+# ---------------------------------------------------------------- Backup / Restore (part 3)
+
+def raw_request(method, path, body=b"", headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+    conn.request(method, path, body=body, headers=dict(headers or {}))
+    resp = conn.getresponse()
+    raw = resp.read()
+    disposition = resp.getheader("Content-Disposition", "")
+    conn.close()
+    return resp.status, raw, disposition
+
+
+def upload_backup(data: bytes, who=SUPER, field="backup"):
+    boundary = "----zxheifitest7MA4YWxk"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"b.json\"\r\n"
+            f"Content-Type: application/json\r\n\r\n").encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    headers = dict(who, **{"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    status, raw, _ = raw_request("POST", "/api/admin/restore", body, headers)
+    try:
+        return status, json.loads(raw)
+    except json.JSONDecodeError:
+        return status, {}
+
+
+def download_backup(who=SUPER):
+    status, raw, disposition = raw_request("GET", "/api/admin/backup", headers=who)
+    try:
+        return status, json.loads(raw), raw, disposition
+    except json.JSONDecodeError:
+        return status, None, raw, disposition
+
+
+def test_backup_download():
+    paired_sub("Tindahan")
+    st, data, raw, disp = download_backup()
+    check("backup -> 200 JSON", st == 200 and isinstance(data, dict), f"{st} {raw[:200]}")
+    check("offered as a file download", "attachment" in disp and "zxheifi-backup-" in disp, disp)
+    check("backup header", data.get("zxheifiBackup") == 1 and data.get("board") and data.get("fw"), data)
+    files = data.get("files", {})
+    for name in ("config.json", "vouchers.json", "subscribers.json", "admins.json", "vendos.json", "sales.json"):
+        check(f"backup has {name}", name in files, list(files))
+    check("no network credentials in the backup", "network.json" not in files and b"apiPass" not in raw
+          and b"wifiPassword" not in raw, list(files))
+    vend = files.get("vendos.json", [])
+    check("box keys included (no re-pair after restore)", any(v.get("key") for v in vend), vend)
+    st, _, _, _ = download_backup(STAFF)
+    check("staff cannot download a backup -> 403", st == 403, st)
+    st, _, _, _ = download_backup({})
+    check("no login -> 401", st == 401, st)
+
+
+def test_restore_round_trip():
+    paired_sub("Tindahan")
+    _, backup, raw, _ = download_backup()
+    # change things after the backup
+    admin_post("/api/admin/settings", {"announcement": "CHANGED", "chargeMaxMinutes": 99})
+    admin_post("/api/admin/vendos/update", {"id": 1, "name": "Renamed"})
+    admin_post("/api/admin/vendos/remove", {"id": 1})
+    st, d = upload_backup(raw)
+    check("restore -> 200 ok", st == 200 and d.get("ok") is True and "config.json" in d.get("files", []), f"{st} {d}")
+    s = get_settings()
+    check("settings back", s.get("announcement") == "" and s.get("chargeMaxMinutes") == 180, s)
+    v = vendo(list_vendos(), 1)
+    check("removed box back, name back", v and v["name"] == "Tindahan", list_vendos())
+    logs = [e["type"] for e in admin_get("/api/admin/logs")[1]]
+    check("restore logged", "restore" in logs, logs)
+
+
+def test_restore_rejects_bad_files():
+    _, _, raw, _ = download_backup()
+    before = get_settings().get("announcement")
+    admin_post("/api/admin/settings", {"announcement": "KEEP ME"})
+    st, d = upload_backup(b"this is not json at all")
+    check("garbage -> 400 bad_backup", st == 400 and d.get("error") == "bad_backup", f"{st} {d}")
+    st, d = upload_backup(b'{"hello": "world"}')
+    check("JSON that isn't a backup -> 400 not_a_backup", st == 400 and d.get("error") == "not_a_backup", f"{st} {d}")
+    st, d = upload_backup(raw[: len(raw) // 2])
+    check("truncated backup -> 400 bad_backup", st == 400 and d.get("error") == "bad_backup", f"{st} {d}")
+    st, d = upload_backup(b'{"zxheifiBackup":1,"files":{"network.json":{"x":1}}}')
+    check("unknown file in a backup -> 400 bad_backup", st == 400 and d.get("error") == "bad_backup", f"{st} {d}")
+    check("nothing changed by rejected restores", get_settings().get("announcement") == "KEEP ME", before)
+    st, d = upload_backup(raw, field="other")
+    check("no 'backup' field -> 400 no_file", st == 400 and d.get("error") == "no_file", f"{st} {d}")
+    st, d = upload_backup(b"{" + b" " * (1024 * 1024 + 10) + b"}")
+    check("over 1 MB -> 400 backup_too_large", st == 400 and d.get("error") == "backup_too_large", f"{st} {d}")
+    st, d = upload_backup(raw, who=STAFF)
+    check("staff cannot restore -> 403", st == 403, f"{st} {d}")
+
+
+def test_board_pin_choices():
+    h = request("GET", "/api/health")[1]
+    check("health reports board + pin choices", h.get("board") == "esp8266" and
+          h.get("pinChoices") == ["D1", "D2", "D5", "D6", "D7"], h)
+    s = get_settings()
+    check("settings report pin choices", s.get("pinChoices") == ["D1", "D2", "D5", "D6", "D7"], s)
+
+
 TESTS = [
+    test_backup_download,
+    test_restore_round_trip,
+    test_restore_rejects_bad_files,
+    test_board_pin_choices,
     test_charging_pairing_and_config,
     test_charging_sale,
     test_charging_type_rules,

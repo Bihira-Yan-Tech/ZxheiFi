@@ -28,6 +28,11 @@ fail-closed protocol. See [docs/14-sub-vendo.md](docs/14-sub-vendo.md).
 a button per port, small OLED screen) that keeps working with no WiFi and
 syncs every sale to the main unit. See [docs/15-charging-station.md](docs/15-charging-station.md).
 
+**New in v2: ESP32 main unit + Backup/Restore** - the main unit also runs on an
+ESP32 DevKit (up to 10 coin boxes), and Admin > Settings can download one backup
+file of everything and restore it on the same or a new board.
+See [docs/16-esp32-and-backup.md](docs/16-esp32-and-backup.md).
+
 **For customers**
 - Open WiFi with a login page: **Insert Coin** (live ₱/minutes counter,
   auto-connect) or a **voucher** code (type it or scan its QR).
@@ -63,7 +68,7 @@ syncs every sale to the main unit. See [docs/15-charging-station.md](docs/15-cha
 ## Repository layout
 
 ```
-firmware/        Main unit firmware (NodeMCU ESP8266) + zxheifi_firmware.bin (ready to flash)
+firmware/        Main unit firmware (NodeMCU or ESP32) + zxheifi_firmware.bin / zxheifi_firmware_esp32.bin
 subvendo/        Sub Vendo firmware + zxheifi_subvendo.bin (ready to flash)
 charging/        Charging Station firmware + zxheifi_charging.bin (ready to flash)
 common/          zx_protocol.h (signed main <-> box protocol) + box/ (code shared by every box)
@@ -106,8 +111,8 @@ python desktop-app/build.py        # build the portable exe + installer
 [`docs/`](docs/) — overview, hardware, MikroTik (hAP lite / hEX), flashing,
 portal customization, features, FAQ/troubleshooting, coin acceptor wiring,
 setup wizard, [changelog](docs/09-changelog.md), [roadmap](docs/10-feature-roadmap.md)
-the [v2 masterplan](docs/13-v2-masterplan.md), [Sub Vendo](docs/14-sub-vendo.md) and
-[Charging Station](docs/15-charging-station.md).
+the [v2 masterplan](docs/13-v2-masterplan.md), [Sub Vendo](docs/14-sub-vendo.md),
+[Charging Station](docs/15-charging-station.md) and [ESP32 + Backup](docs/16-esp32-and-backup.md).
 
 ## Credits
 

@@ -11,7 +11,7 @@
 #define ADMIN_API_H
 
 #include <Arduino.h>
-#include <FS.h>
+#include "config.h"
 #include <ArduinoJson.h>
 #include <MD5Builder.h>
 #include <time.h>
@@ -109,13 +109,9 @@ struct SpeedProfile {
 
 // NodeMCU pin label -> GPIO for the pins the coin slot may use. D0 (no
 // interrupt), D3/D4/D8 (boot-strapping pins) are deliberately absent.
+// (Labels depend on the board - see platform.h's ZX_PIN_LABELS.)
 static int coinPinGpio(const String& label) {
-  if (label == "D1") return 5;
-  if (label == "D2") return 4;
-  if (label == "D5") return 14;
-  if (label == "D6") return 12;
-  if (label == "D7") return 13;
-  return -1;
+  return zxPinGpio(label);
 }
 
 // A recurring account (boarding house tenant, monthly subscriber, etc)
@@ -224,8 +220,9 @@ public:
   // Settings > Coin Slot: which NodeMCU pins the coin acceptor and its
   // power relay use (baseboards differ), whether the relay switches on
   // with a HIGH or LOW signal, and pesos per pulse. Applied live.
-  String coinPin = "D5";
-  String relayPin = "D7";
+  String coinPin = DEFAULT_COIN_PIN;
+  String relayPin = DEFAULT_RELAY_PIN;
+  bool pinsWereReset = false;   // a restored backup from another board had pins this one doesn't have
   bool relayActiveHigh = true;
   uint16_t coinPulseValue = COIN_PULSE_VALUE_PHP;
 
@@ -259,6 +256,11 @@ public:
     loadSubscribers();
     loadAdminAccounts(initialAdminPassword);
     loadActivityLog();
+    if (pinsWereReset) {
+      logEvent("pins_reset", String("coin/relay pins were not valid on this board - reset to ") +
+               DEFAULT_COIN_PIN + " / " + DEFAULT_RELAY_PIN);
+      saveSettings();
+    }
     loadSalesHistory();
     loadToday();
   }
@@ -388,7 +390,7 @@ public:
   // predictable from boot time.
   static String randomSalt() {
     char buf[9];
-    snprintf(buf, sizeof(buf), "%08x", RANDOM_REG32);
+    snprintf(buf, sizeof(buf), "%08x", (unsigned)ZX_RANDOM32());
     return String(buf);
   }
 
@@ -724,7 +726,7 @@ public:
       String code;
       do {
         code = "ZX";
-        for (uint8_t c = 0; c < 6; c++) code += alphabet[RANDOM_REG32 % 32];
+        for (uint8_t c = 0; c < 6; c++) code += alphabet[ZX_RANDOM32() % 32];
       } while (findVoucher(code));
 
       VoucherRecord v;
@@ -808,8 +810,14 @@ public:
     }
     if (speedProfiles.empty()) seedDefaultSpeedProfiles(&doc);
     announcement = doc["announcement"] | String("");
-    coinPin = doc["coinPin"] | String("D5");
-    relayPin = doc["relayPin"] | String("D7");
+    coinPin = doc["coinPin"] | String(DEFAULT_COIN_PIN);
+    relayPin = doc["relayPin"] | String(DEFAULT_RELAY_PIN);
+    // e.g. a NodeMCU backup restored onto an ESP32: "D5" means nothing here.
+    if (coinPinGpio(coinPin) < 0 || (relayPin != "none" && coinPinGpio(relayPin) < 0) || coinPin == relayPin) {
+      coinPin = DEFAULT_COIN_PIN;
+      relayPin = DEFAULT_RELAY_PIN;
+      pinsWereReset = true;
+    }
     relayActiveHigh = doc["relayActiveHigh"] | true;
     coinPulseValue = doc["coinPulseValue"] | (uint16_t)COIN_PULSE_VALUE_PHP;
     telegramEnabled = doc["telegramEnabled"] | false;

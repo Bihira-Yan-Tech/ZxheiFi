@@ -40,7 +40,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <ESP8266WebServer.h>
+#include "platform.h"
 #include "config.h"
 #include "zx_protocol.h"
 #include "admin_api.h"
@@ -51,7 +51,7 @@
 
 class VendoAPI {
 public:
-  void begin(ESP8266WebServer& server, GUIHandler& gui, VendoRegistry& reg, CoinSlot& coin,
+  void begin(ZxWebServer& server, GUIHandler& gui, VendoRegistry& reg, CoinSlot& coin,
              AdminAPI& admin, TelegramNotifier& telegram) {
     _server = &server;
     _gui = &gui;
@@ -91,7 +91,7 @@ public:
   }
 
 private:
-  ESP8266WebServer* _server = nullptr;
+  ZxWebServer* _server = nullptr;
   GUIHandler* _gui = nullptr;
   VendoRegistry* _reg = nullptr;
   CoinSlot* _coin = nullptr;
@@ -183,9 +183,11 @@ private:
   }
 
   // Coin/relay pins a box may use: a Charging Station's D1/D2 are its I2C bus.
+  // Boxes are NodeMCUs, so their pins are NodeMCU labels whatever board
+  // this main unit is.
   static bool pinAllowed(const Vendo& v, const String& pin) {
     if (v.isCharging()) return pin == "D5" || pin == "D6" || pin == "D7";
-    return coinPinGpio(pin) >= 0;
+    return pin == "D1" || pin == "D2" || pin == "D5" || pin == "D6" || pin == "D7";
   }
 
   static String cleanName(String s) {

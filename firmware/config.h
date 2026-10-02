@@ -13,6 +13,8 @@
 // uploaded to the router - a mismatch made Settings silently misbehave.
 #define FIRMWARE_VERSION "2.0.0-dev"
 
+#include "platform.h"   // NodeMCU or ESP32 - see platform.h
+
 // ============================================================================
 // NETWORK CONFIGURATION
 // ============================================================================
@@ -212,14 +214,31 @@
 #define TELEGRAM_MAX_MSG_LEN  200    // characters per message
 
 // ============================================================================
-// HARDWARE PIN ASSIGNMENTS (NodeMCU ESP8266)
+// HARDWARE PIN ASSIGNMENTS
 // ============================================================================
+#if defined(ESP32)
+// ESP32 DevKit (ESP32-WROOM-32)
+#define PIN_COINSLOT      14    // G14 — Coin slot pulse sensor (default; Settings > Coin Slot)
+#define PIN_LED_STATUS    2     // GPIO2 — Status LED (built-in, lit on HIGH)
+#define PIN_LED_ADMIN     26    // G26 — Admin indicator LED
+#define PIN_RELAY         13    // G13 — Relay (acceptor power)
+#define PIN_BUZZER        25    // GPIO25 — Buzzer
+#define PIN_SETUP_BUTTON  0     // GPIO0 — the BOOT button; press it while the LED blinks fast after boot to re-enter Setup Mode
+#define DEFAULT_COIN_PIN  "G14"
+#define DEFAULT_RELAY_PIN "G13"
+#define ADMIN_LED_LABEL   "G26"
+#else
+// NodeMCU (ESP8266)
 #define PIN_COINSLOT      D5    // GPIO14 — Coin slot pulse sensor
 #define PIN_LED_STATUS    D4    // GPIO2 — Status LED (built-in)
 #define PIN_LED_ADMIN     D6    // GPIO12 — Admin indicator LED
 #define PIN_RELAY         D7    // GPIO13 — Relay (for external coin lock)
 #define PIN_BUZZER        D8    // GPIO15 — Buzzer for warnings
 #define PIN_SETUP_BUTTON  D3    // GPIO0 — the onboard FLASH button most NodeMCU boards already have; press it while the LED blinks fast after boot to re-enter Setup Mode
+#define DEFAULT_COIN_PIN  "D5"
+#define DEFAULT_RELAY_PIN "D7"
+#define ADMIN_LED_LABEL   "D6"
+#endif
 #define SETUP_BUTTON_WINDOW_MS 3000 // how long after boot that FLASH press is accepted
 
 // ============================================================================
@@ -253,11 +272,9 @@
 #if defined(ESP32)
 #define MAX_SUB_VENDOS  10
 #define BOARD_NAME      "esp32"
-#define ZX_RANDOM32()   esp_random()
 #else
 #define MAX_SUB_VENDOS  3
 #define BOARD_NAME      "esp8266"
-#define ZX_RANDOM32()   RANDOM_REG32
 #endif
 #define MAX_COLLECTIONS 50   // coin-box collections kept (oldest dropped)
 

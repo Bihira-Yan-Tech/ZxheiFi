@@ -473,3 +473,4 @@ textarea#announcement { width: 100%; resize: vertical; font: inherit; padding: 1
 .port-chip.on { border-color: var(--accent); }
 .btn-mini { width: auto; padding: 1px 6px; font-size: 11px; margin: 0 0 0 4px; }
 #chargeRatesTable input { width: 100%; }
+.backup-warning { color: var(--alert, #ef4b45); }

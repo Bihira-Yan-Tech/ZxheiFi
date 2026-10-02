@@ -43,6 +43,9 @@ def copy_extras(dst):
     sub_bin = ROOT / "subvendo" / "zxheifi_subvendo.bin"
     if sub_bin.is_file():   # v2+: the Sub Vendo firmware
         shutil.copy2(sub_bin, dst / "Firmware")
+    esp32_bin = ROOT / "firmware" / "zxheifi_firmware_esp32.bin"
+    if esp32_bin.is_file():   # v2+: the main unit on an ESP32 DevKit
+        shutil.copy2(esp32_bin, dst / "Firmware")
     charging_bin = ROOT / "charging" / "zxheifi_charging.bin"
     if charging_bin.is_file():   # v2+: the Charging Station firmware
         shutil.copy2(charging_bin, dst / "Firmware")
@@ -73,6 +76,7 @@ Laman ng folder na ito:
   Firmware\\zxheifi_firmware.bin          - firmware ng main unit (kasama na rin sa app)
   Firmware\\zxheifi_subvendo.bin          - firmware ng Sub Vendo / dagdag na coin box (v2)
   Firmware\\zxheifi_charging.bin          - firmware ng Charging Station (v2)
+  Firmware\\zxheifi_firmware_esp32.bin    - firmware ng main unit kung ESP32 DevKit (v2)
   MikroTik GUI (portal files)\\           - login/status/admin pages + sounds
                                            (ina-upload ng app gamit ang "Upload GUI Files")
   MikroTik Scripts (manual setup)\\       - .rsc files kung ayaw gumamit ng app
@@ -91,6 +95,7 @@ What's in this folder:
   Firmware\\zxheifi_firmware.bin          - main unit firmware (also built into the app)
   Firmware\\zxheifi_subvendo.bin          - Sub Vendo / extra coin box firmware (v2)
   Firmware\\zxheifi_charging.bin          - Charging Station firmware (v2)
+  Firmware\\zxheifi_firmware_esp32.bin    - main unit firmware for an ESP32 DevKit (v2)
   MikroTik GUI (portal files)\\           - login/status/admin pages + sounds
                                            (the app uploads them with "Upload GUI Files")
   MikroTik Scripts (manual setup)\\       - .rsc files if you don't want to use the app

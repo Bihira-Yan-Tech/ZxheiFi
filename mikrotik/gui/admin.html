@@ -601,6 +601,23 @@
                 </div>
                 <div class="save-status" id="settingsSaveStatus" style="display:none;"></div>
                 <button class="btn btn-success" id="saveSettingsBtn" onclick="saveSettings()">Save Settings</button>
+
+                <h2 style="margin-top:32px;">Backup &amp; Restore</h2>
+                <p class="hint">
+                    One file with everything on this unit: settings, prices, vouchers, subscribers, admin accounts,
+                    sales, logs, live sessions and your coin boxes. Use it to move to a new board (e.g. NodeMCU to
+                    ESP32) or to recover after a fault. WiFi and MikroTik passwords are not in it - the new board's
+                    Setup Wizard asks for those.
+                </p>
+                <p class="hint backup-warning">⚠️ Keep the file private - it holds your coin boxes' keys, so anyone
+                    with it could take them over.</p>
+                <button type="button" class="btn btn-secondary btn-inline" onclick="downloadBackup()">⬇ Download backup</button>
+                <div class="form-group" style="margin-top:12px;">
+                    <label for="restoreFile">Restore from a backup file</label>
+                    <input type="file" id="restoreFile" accept=".json,application/json">
+                </div>
+                <button type="button" class="btn btn-danger btn-inline" onclick="restoreBackup()">Restore</button>
+                <div class="save-status" id="backupStatus" style="display:none;"></div>
             </div>
         </div>
     </div>

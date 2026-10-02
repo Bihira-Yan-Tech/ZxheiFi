@@ -19,8 +19,7 @@
 #define SETUP_MODE_H
 
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include "platform.h"
 #include <DNSServer.h>
 #include "config.h"
 #include "network_config.h"
@@ -47,17 +46,17 @@ public:
       if (digitalRead(PIN_SETUP_BUTTON) == LOW) {
         delay(50); // debounce
         if (digitalRead(PIN_SETUP_BUTTON) == LOW) {
-          digitalWrite(PIN_LED_STATUS, LOW); // built-in LED is active-low: solid on
+          digitalWrite(PIN_LED_STATUS, ZX_LED_ON); // solid on
           return true;
         }
       }
       delay(10);
     }
-    digitalWrite(PIN_LED_STATUS, HIGH); // off
+    digitalWrite(PIN_LED_STATUS, !ZX_LED_ON); // off
     return false;
   }
 
-  void begin(ESP8266WebServer& server) {
+  void begin(ZxWebServer& server) {
     _server = &server;
 
     IPAddress apIP(192, 168, 4, 1);
@@ -89,7 +88,7 @@ public:
   }
 
 private:
-  ESP8266WebServer* _server = nullptr;
+  ZxWebServer* _server = nullptr;
   DNSServer _dnsServer;
 
   void handleForm(const String& error) {

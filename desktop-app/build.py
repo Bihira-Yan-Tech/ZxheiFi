@@ -68,8 +68,9 @@ ESPTOOL_DATA_ARGS = ["--collect-data", "esptool"]
 # default .bin on any PC (main.py's DEFAULT_FIRMWARE looks for it here).
 SUB_FIRMWARE_BIN = os.path.normpath(os.path.join(HERE, "..", "subvendo", "zxheifi_subvendo.bin"))
 CHARGING_FIRMWARE_BIN = os.path.normpath(os.path.join(HERE, "..", "charging", "zxheifi_charging.bin"))
+ESP32_FIRMWARE_BIN = os.path.normpath(os.path.join(HERE, "..", "firmware", "zxheifi_firmware_esp32.bin"))
 FIRMWARE_ARGS = ["--add-data", f"{FIRMWARE_BIN};firmware", "--add-data", f"{SUB_FIRMWARE_BIN};firmware",
-                 "--add-data", f"{CHARGING_FIRMWARE_BIN};firmware"]
+                 "--add-data", f"{CHARGING_FIRMWARE_BIN};firmware", "--add-data", f"{ESP32_FIRMWARE_BIN};firmware"]
 
 # The customer GUI too, for Configure MikroTik's Upload GUI Files button
 # (main.py's GUI_DIR looks for it here).
@@ -136,6 +137,10 @@ def main():
 
     if not os.path.isfile(FIRMWARE_BIN):
         print(f"ERROR: firmware not found at {FIRMWARE_BIN} - compile it first (see docs/05-nodemcu-flash.md).")
+        sys.exit(1)
+    if not os.path.isfile(ESP32_FIRMWARE_BIN):
+        print(f"ERROR: ESP32 firmware not found at {ESP32_FIRMWARE_BIN} - run: pio run -d firmware -e main_esp32 "
+              "then python tools/merge_esp32.py (see firmware/BUILD_INSTRUCTIONS.md).")
         sys.exit(1)
     if not os.path.isfile(CHARGING_FIRMWARE_BIN):
         print(f"ERROR: charging station firmware not found at {CHARGING_FIRMWARE_BIN} - run: pio run -d charging "

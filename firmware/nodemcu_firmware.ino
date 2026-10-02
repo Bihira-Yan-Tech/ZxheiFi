@@ -11,10 +11,7 @@
  */
 
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <FS.h>
+#include "platform.h"   // NodeMCU or ESP32
 #include <ArduinoJson.h>
 #include <MD5Builder.h>
 #include <time.h>
@@ -33,10 +30,11 @@
 #include "coin_slot.h"
 #include "gui_handler.h"
 #include "vendo_api.h"
+#include "backup_api.h"
 #include "network_config.h"
 #include "setup_mode.h"
 
-ESP8266WebServer server(80);
+ZxWebServer server(80);
 MikrotikAPI mikrotikApi;
 SessionManager sessionManager;
 PPPoEManager pppoeManager;
@@ -47,6 +45,7 @@ VendoRegistry vendoRegistry;
 CoinSlot coinSlot;
 GUIHandler guiHandler;
 VendoAPI vendoApi;
+BackupAPI backupApi;
 NetworkConfig networkConfig;
 SetupModeManager setupModeManager;
 bool inSetupMode = false;
@@ -83,7 +82,7 @@ int coinGpio = -1;
 void applyCoinPins() {
   if (coinGpio >= 0) detachInterrupt(digitalPinToInterrupt(coinGpio));
   coinGpio = coinPinGpio(adminAPI.coinPin);
-  if (coinGpio < 0) coinGpio = coinPinGpio("D5");
+  if (coinGpio < 0) coinGpio = coinPinGpio(DEFAULT_COIN_PIN);
   pinMode(coinGpio, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(coinGpio), onCoinPulse, FALLING);
   coinSlot.applyRelayPin();
@@ -92,9 +91,9 @@ void applyCoinPins() {
                 adminAPI.relayActiveHigh ? "HIGH" : "LOW", adminAPI.coinPulseValue);
 }
 
-// The admin LED (D6) is skipped if the coin slot was moved onto that pin.
+// The admin LED is skipped if the coin slot was moved onto that pin.
 bool adminLedFree() {
-  return adminAPI.coinPin != "D6" && adminAPI.relayPin != "D6";
+  return adminAPI.coinPin != ADMIN_LED_LABEL && adminAPI.relayPin != ADMIN_LED_LABEL;
 }
 
 void loadConfig() {
@@ -122,7 +121,7 @@ void beginWiFi(const char* ssid, const char* password) {
   int n = WiFi.scanNetworks();
   for (int i = 0; i < n; i++) {
     if (WiFi.SSID(i) == ssid) {
-      open = WiFi.encryptionType(i) == ENC_TYPE_NONE;
+      open = WiFi.encryptionType(i) == ZX_WIFI_OPEN;
       break;
     }
   }
@@ -303,7 +302,7 @@ void updateStatusLED() {
   // built-in LED on D4 lights when the pin is LOW (it was inverted).
   static uint32_t lastBlink = 0;
   if (isMikrotikReachable) {
-    digitalWrite(PIN_LED_STATUS, LOW);
+    digitalWrite(PIN_LED_STATUS, ZX_LED_ON);
   } else if (millis() - lastBlink > 500) {
     digitalWrite(PIN_LED_STATUS, !digitalRead(PIN_LED_STATUS));
     lastBlink = millis();
@@ -319,16 +318,17 @@ void setupRoutes() {
   guiHandler.setVendoRegistry(vendoRegistry);
   guiHandler.onCoinPinsChanged = applyCoinPins;
   vendoApi.begin(server, guiHandler, vendoRegistry, coinSlot, adminAPI, telegramNotifier);
+  backupApi.begin(server, guiHandler, adminAPI, sessionManager);
 }
 
 void setup() {
   Serial.begin(115200);
   Serial.println("\n=== ZXHEIFI NODEMCU FIRMWARE ===");
 
-  if (!SPIFFS.begin()) {
+  if (!ZX_FS_BEGIN()) {
     Serial.println("SPIFFS Mount Failed - Formatting...");
     SPIFFS.format();
-    SPIFFS.begin();
+    ZX_FS_BEGIN();
   }
 
   // Setup Mode runs INSTEAD of everything below, never alongside it -
@@ -378,7 +378,7 @@ void loop() {
   }
 
   server.handleClient();
-  MDNS.update();
+  ZX_MDNS_UPDATE();
   wifiWatchdog();
   telegramNotifier.loop(); // sends at most one queued message per call; see telegram.h
 
@@ -431,6 +431,7 @@ void loop() {
   processCoinSlot();
   coinSlot.loop();
   vendoApi.loop();
+  backupApi.loop();
   updateStatusLED();
 
   delay(10);

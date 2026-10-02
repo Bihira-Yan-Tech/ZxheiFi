@@ -7,7 +7,8 @@ before it's built.
 > **Status (2026-09-26):** Part 1 - Vendos framework + **Sub Vendo** - built on
 > branch `v2` (see [14-sub-vendo.md](14-sub-vendo.md)); awaiting hardware test.
 > Part 2 - **Charging Station** - built 2026-09-30 (see [15-charging-station.md](15-charging-station.md));
-> awaiting hardware test. Next: ESP32 main unit + backup/restore.
+> awaiting hardware test. Part 3 - **ESP32 main unit + Backup/Restore** - built 2026-10-02
+> (see [16-esp32-and-backup.md](16-esp32-and-backup.md)). Next (2.1): Fair Time, portal languages, dual-WAN.
 
 ## Buod (Tagalog)
 

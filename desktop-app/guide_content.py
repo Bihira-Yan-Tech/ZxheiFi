@@ -304,6 +304,33 @@ SECTIONS_TL = [
         "masi-sync ang sales mamaya."
     ),
     (
+        "ESP32 Main Unit at Backup",
+        "BACKUP / RESTORE (Admin → Settings → Backup & Restore):\n"
+        "• 'Download backup' - isang file na may lahat: settings, presyo, vouchers, "
+        "subscribers, admin accounts, sales, logs, mga aktibong customer at ang "
+        "mga box (kasama ang keys). ITAGO ITO - kung makuha ng iba, puwede "
+        "nilang gamitin ang mga box mo. Wala rito ang WiFi at MikroTik password.\n"
+        "• 'Restore' - piliin ang file → kumpirmahin → papalitan ang lahat at "
+        "magre-restart ang unit. Kapag sira o hindi ZxheiFi ang file, walang "
+        "mababago.\n"
+        "• Gumawa ng backup paminsan-minsan (hal. linggo-linggo) at bago "
+        "mag-flash o magpalit ng board.\n\n"
+        "ESP32 BILANG MAIN UNIT (opsyonal - mas malakas na kapalit ng NodeMCU, "
+        "hanggang 10 box):\n"
+        "1. Sa lumang NodeMCU: Admin → Settings → Download backup.\n"
+        "2. Flash Firmware tab → Device type: 'Main unit (ESP32)' → Flash ang "
+        "ESP32 DevKit.\n"
+        "3. Setup Wizard (\"ZxheiFi-Setup\" WiFi) - parehong sagot tulad ng "
+        "dati (WiFi, 10.0.0.1, zxheifi-api, API pass, admin password).\n"
+        "4. Configure MikroTik: palitan ang NodeMCU MAC ng MAC ng ESP32 (lalabas "
+        "ito habang nagfa-flash) → Config.\n"
+        "5. Admin → Settings → Restore → piliin ang backup.\n"
+        "6. Pins sa ESP32: coin G14, relay G13, buzzer GPIO25 (BOOT button = "
+        "setup). Puwedeng palitan sa Settings → Coin Slot.\n\n"
+        "Kapag mali ang board na napili sa Flash tab, hihinto ang flash at "
+        "sasabihin kung bakit - walang masisira."
+    ),
+    (
         "Sounds",
         "Kasama na ang starter set ng sounds (sounds/ folder, na-upload kasama "
         "ng GUI):\n"
@@ -722,6 +749,32 @@ SECTIONS_EN = [
         "Edit → 'Port relays: HIGH'.\n"
         "• '!' in the screen's corner → no link to the main unit; charging goes "
         "on and sales sync later."
+    ),
+    (
+        "ESP32 Main Unit and Backup",
+        "BACKUP / RESTORE (Admin → Settings → Backup & Restore):\n"
+        "• 'Download backup' - one file with everything: settings, prices, "
+        "vouchers, subscribers, admin accounts, sales, logs, live customers and "
+        "your coin boxes (with their keys). KEEP IT PRIVATE - with it, someone "
+        "could take over your boxes. WiFi and MikroTik passwords are not in it.\n"
+        "• 'Restore' - pick the file → confirm → everything is replaced and the "
+        "unit restarts. A damaged or foreign file changes nothing.\n"
+        "• Make a backup now and then (e.g. weekly) and before flashing or "
+        "swapping boards.\n\n"
+        "ESP32 AS THE MAIN UNIT (optional - a stronger replacement for the "
+        "NodeMCU, up to 10 boxes):\n"
+        "1. On the old NodeMCU: Admin → Settings → Download backup.\n"
+        "2. Flash Firmware tab → Device type: 'Main unit (ESP32)' → Flash the ESP32 "
+        "DevKit.\n"
+        "3. Setup Wizard (\"ZxheiFi-Setup\" WiFi) - same answers as before (WiFi, "
+        "10.0.0.1, zxheifi-api, API pass, admin password).\n"
+        "4. Configure MikroTik: replace the NodeMCU MAC with the ESP32's MAC (shown "
+        "while flashing) → Config.\n"
+        "5. Admin → Settings → Restore → pick the backup.\n"
+        "6. ESP32 pins: coin G14, relay G13, buzzer GPIO25 (BOOT button = setup). "
+        "Changeable in Settings → Coin Slot.\n\n"
+        "If the wrong board is chosen in the Flash tab, the flash stops and says "
+        "why - nothing is damaged."
     ),
     (
         "Sounds",

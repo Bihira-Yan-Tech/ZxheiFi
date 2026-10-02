@@ -19,8 +19,7 @@
 #define TELEGRAM_H
 
 #include <Arduino.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
+#include "platform.h"
 #include "config.h"
 
 class TelegramNotifier {
@@ -56,7 +55,7 @@ public:
     _tail = (_tail + 1) % TELEGRAM_QUEUE_SIZE;
     _count--;
 
-    std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure());
+    std::unique_ptr<ZxSecureClient> client(new ZxSecureClient());
     // No certificate pinning - a common, accepted tradeoff for
     // hobbyist/small-business ESP8266 projects talking to a fixed,
     // well-known API host, given the RAM/complexity cost of managing a

@@ -1835,8 +1835,7 @@ async function loadSettingsIntoForm() {
     document.getElementById('brandColor').value = data.brandColor || '#2dd4c9';
     document.getElementById('soundEnabled').checked = !!data.soundEnabled;
     document.getElementById('announcement').value = data.announcement || '';
-    document.getElementById('coinPin').value = data.coinPin || 'D5';
-    document.getElementById('relayPin').value = data.relayPin || 'D7';
+    fillPinChoices(data.pinChoices, data.coinPin, data.relayPin);
     document.getElementById('relayActiveHigh').value = data.relayActiveHigh === false ? 'false' : 'true';
     document.getElementById('coinPulseValue').value = data.coinPulseValue || 1;
     speedProfilesCache = (data.speedProfiles || []).map(sp => Object.assign({}, sp, { id: String(sp.id) }));
@@ -2276,3 +2275,102 @@ function chargeRateProblems(rates, maxMinutes) {
   if (maxMinutes < 10 || maxMinutes > 1440) problems.push('Charging: max time per port must be 10-1440 minutes.');
   return problems;
 }
+
+// ---- Coin Slot pins per board (v2: NodeMCU or ESP32) ---------------------
+// The unit says which pin labels its board has (D1.. on a NodeMCU, G13.. on
+// an ESP32). A saved pin the board doesn't have stays visible, marked.
+function fillPinChoices(choices, coinPin, relayPin) {
+  const pins = Array.isArray(choices) && choices.length ? choices : ['D1', 'D2', 'D5', 'D6', 'D7'];
+  const build = (sel, value, withNone) => {
+    const opts = pins.slice();
+    let html = opts.map(p => `<option value="${p}">${p}</option>`).join('');
+    if (withNone) html += '<option value="none">None (acceptor always on)</option>';
+    if (value && value !== 'none' && !opts.includes(value)) {
+      html = `<option value="${escHtml(value)}">${escHtml(value)} (not valid on this board)</option>` + html;
+    }
+    sel.innerHTML = html;
+    sel.value = value || pins[0];
+  };
+  build(document.getElementById('coinPin'), coinPin, false);
+  build(document.getElementById('relayPin'), relayPin, true);
+}
+
+// ---- Backup & Restore (v2) --------------------------------------------
+function setBackupStatus(kind, message) {
+  const el = document.getElementById('backupStatus');
+  el.className = 'save-status ' + kind;
+  el.textContent = message;
+  el.style.display = message ? '' : 'none';
+}
+
+const BACKUP_ERRORS = {
+  bad_backup: 'That file is damaged or is not a ZxheiFi backup. Nothing was changed.',
+  not_a_backup: 'That file is not a ZxheiFi backup. Nothing was changed.',
+  backup_too_large: 'That file is too big (over 1 MB) to be a ZxheiFi backup. Nothing was changed.',
+  no_file: 'Choose a backup file first.',
+  not_saved_low_memory: 'The unit ran out of storage while receiving the file. Restart it and try again.',
+  restore_in_progress: 'A restore is already running - wait for the unit to restart.',
+  super_admin_required: 'Only a super admin can do this.',
+};
+
+async function downloadBackup() {
+  setBackupStatus('pending', 'Preparing the backup...');
+  try {
+    const res = await adminFetch('/api/admin/backup');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(BACKUP_ERRORS[data.error] || data.error || ('HTTP ' + res.status));
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `zxheifi-backup-${ymd(new Date())}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setBackupStatus('ok', `✅ Backup saved (${Math.round(blob.size / 1024)} KB). Keep it somewhere safe and private.`);
+  } catch (err) {
+    setBackupStatus('error', '❌ Backup failed: ' + err.message);
+  }
+}
+
+async function restoreBackup() {
+  const input = document.getElementById('restoreFile');
+  const file = input.files && input.files[0];
+  if (!file) {
+    setBackupStatus('error', BACKUP_ERRORS.no_file);
+    return;
+  }
+  if (file.size > 1048576) {
+    setBackupStatus('error', BACKUP_ERRORS.backup_too_large);
+    return;
+  }
+  let info;
+  try {
+    info = JSON.parse(await file.text());
+  } catch (err) {
+    setBackupStatus('error', BACKUP_ERRORS.bad_backup);
+    return;
+  }
+  if (!info || info.zxheifiBackup !== 1 || typeof info.files !== 'object') {
+    setBackupStatus('error', BACKUP_ERRORS.not_a_backup);
+    return;
+  }
+  const when = info.createdAt ? new Date(info.createdAt * 1000).toLocaleString() : 'unknown date';
+  const board = info.board === 'esp32' ? 'ESP32' : (info.board === 'esp8266' ? 'NodeMCU' : (info.board || '?'));
+  if (!confirm(`Restore this backup?\n\nMade on: ${when}\nBoard: ${board} - firmware ${info.fw || '?'}\n` +
+               `${Object.keys(info.files).length} files\n\nEverything on this unit (settings, vouchers, sales, ` +
+               'coin boxes...) is replaced by the backup, then the unit restarts.')) return;
+  setBackupStatus('pending', 'Uploading and checking the backup...');
+  try {
+    const form = new FormData();
+    form.append('backup', file, file.name);
+    const res = await adminFetch('/api/admin/restore', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(BACKUP_ERRORS[data.error] || data.error || ('HTTP ' + res.status));
+    setBackupStatus('ok', `✅ Restored ${data.files.length} files. The unit is restarting - this page reloads in 20 seconds.`);
+    setTimeout(() => location.reload(), 20000);
+  } catch (err) {
+    setBackupStatus('error', '❌ Not restored: ' + err.message);
+  }
+}
+

@@ -59,11 +59,18 @@ _BUNDLED_CHARGING_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file
                                           "zxheifi_charging.bin")
 DEFAULT_CHARGING_FIRMWARE = _BUNDLED_CHARGING_FIRMWARE if os.path.isfile(_BUNDLED_CHARGING_FIRMWARE) else \
     os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "charging", "zxheifi_charging.bin"))
+_BUNDLED_ESP32_FIRMWARE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firmware",
+                                       "zxheifi_firmware_esp32.bin")
+DEFAULT_ESP32_FIRMWARE = _BUNDLED_ESP32_FIRMWARE if os.path.isfile(_BUNDLED_ESP32_FIRMWARE) else \
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "firmware",
+                                  "zxheifi_firmware_esp32.bin"))
 DEVICE_MAIN = "Main unit"
+DEVICE_MAIN_ESP32 = "Main unit (ESP32)"
 DEVICE_SUB = "Sub Vendo"
 DEVICE_CHARGING = "Charging Station"
-DEVICE_FIRMWARE = {DEVICE_MAIN: DEFAULT_FIRMWARE, DEVICE_SUB: DEFAULT_SUB_FIRMWARE,
-                   DEVICE_CHARGING: DEFAULT_CHARGING_FIRMWARE}
+DEVICE_FIRMWARE = {DEVICE_MAIN: DEFAULT_FIRMWARE, DEVICE_MAIN_ESP32: DEFAULT_ESP32_FIRMWARE,
+                   DEVICE_SUB: DEFAULT_SUB_FIRMWARE, DEVICE_CHARGING: DEFAULT_CHARGING_FIRMWARE}
+MAIN_DEVICES = (DEVICE_MAIN, DEVICE_MAIN_ESP32)
 # Network Settings (incl. the generated NodeMCU API password) persist
 # between runs - re-running Config with a freshly generated password would
 # silently break a NodeMCU already set up with the old one. The router's
@@ -156,7 +163,7 @@ class FlashTab(ctk.CTkFrame):
         type_row = ctk.CTkFrame(parent, fg_color="transparent")
         type_row.pack(fill="x", padx=16, pady=(8, 0))
         ctk.CTkLabel(type_row, text="Device type:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.device_type = ctk.CTkSegmentedButton(type_row, values=[DEVICE_MAIN, DEVICE_SUB, DEVICE_CHARGING],
+        self.device_type = ctk.CTkSegmentedButton(type_row, values=[DEVICE_MAIN, DEVICE_MAIN_ESP32, DEVICE_SUB, DEVICE_CHARGING],
                                                   command=self._on_device_type,
                                                   selected_color=theme.ACCENT,
                                                   selected_hover_color=theme.ACCENT_DARK)
@@ -281,11 +288,15 @@ class FlashTab(ctk.CTkFrame):
             return ("Charging Station = a coin-op phone charger (4 ports, buttons + screen). After flashing it opens "
                     "the \"ZxheiFi-Charge-Setup\" WiFi:\nenter the WiFi of its spot and the pairing code from "
                     "Admin > Vendos > Add Vendo (type: Charging Station).")
+        if kind == DEVICE_MAIN_ESP32:
+            return ("Main unit (ESP32) = an ESP32 DevKit running the shop instead of a NodeMCU - up to 10 coin "
+                    "boxes. Coin pin G14, relay G13, buzzer GPIO25.\nMoving from a NodeMCU? Download a backup in "
+                    "Admin > Settings first, then restore it on the ESP32.")
         return "Main unit = the NodeMCU that runs the shop (talks to the MikroTik)."
 
     def _is_sub(self):
         """Any box that isn't the main unit (Sub Vendo or Charging Station)."""
-        return self.device_type.get() != DEVICE_MAIN
+        return self.device_type.get() not in MAIN_DEVICES
 
     def _on_device_type(self, kind):
         # Swap the default .bin only if the field still holds a default -
@@ -349,6 +360,7 @@ class FlashTab(ctk.CTkFrame):
             on_done=self._on_flash_done,
             erase_all=erase_all,
             on_mac=lambda mac: self.after(0, lambda: self._on_flash_mac(mac)),
+            chip="esp32" if self.device_type.get() == DEVICE_MAIN_ESP32 else "esp8266",
         )
         job.start()
 

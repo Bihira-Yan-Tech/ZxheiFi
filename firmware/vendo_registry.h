@@ -19,7 +19,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <FS.h>
+#include "platform.h"
 #include <vector>
 #include "config.h"
 #include "admin_api.h"

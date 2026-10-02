@@ -1,5 +1,49 @@
 # 📝 Changelog
 
+## v2.0.0-dev - 2026-10-02 - ESP32 main unit + Backup/Restore (part 3 of v2)
+
+Spec: `docs/superpowers/specs/2026-10-02-esp32-main-backup-restore-design.md`;
+guide: [16-esp32-and-backup.md](16-esp32-and-backup.md).
+
+- **ESP32 DevKit main unit:**
+  - `firmware/platform.h` maps the board differences (web server, SPIFFS,
+    HTTPS client, mDNS, random, open-WiFi constant, header collection, LED
+    polarity, pin labels), so one source tree builds both boards
+    (`main_esp8266` / `main_esp32`);
+  - up to **10** coin boxes on an ESP32 (3 on a NodeMCU);
+  - pins on the ESP32: coin G14, relay G13, buzzer GPIO25, LED GPIO2, BOOT =
+    setup;
+  - `tools/merge_esp32.py` makes `zxheifi_firmware_esp32.bin`, a single image
+    flashed at 0x0 like the NodeMCU's;
+  - build size: 1,165,221 of 1,310,720 bytes (default.csv, OTA-ready).
+- **Backup/Restore** (Admin → Settings → Backup & Restore):
+  - `GET /api/admin/backup` streams every data file into one JSON. That
+    includes vouchers, subscribers, admins (salted hashes), sales, logs, live
+    sessions and the coin boxes with their keys, but never `network.json`.
+  - `POST /api/admin/restore` (multipart, at most 1 MB):
+    - the upload is streamed to flash;
+    - `backup_split.h` (pure C++, 18 host tests incl. every chunk size) splits
+      it per file and validates the WHOLE backup before anything changes;
+    - the swap happens in `loop()` right before the restart, so no periodic
+      save can overwrite it.
+  - The restore is logged after the reboot. Pins from another board are reset
+    to the defaults and logged (`pins_reset`).
+- **Admin:**
+  - Coin Slot pin dropdowns come from the board's `pinChoices` (health and
+    settings now report `board` + `pinChoices`);
+  - a Backup & Restore section, with a confirm dialog that shows the backup's
+    board/firmware/date and a privacy warning.
+- **Setup Companion:**
+  - Device type **Main unit (ESP32)**;
+  - the flasher passes the chip (`esp8266` / `esp32`), so the wrong board
+    stops with a clear message;
+  - Scan Device uses `auto`;
+  - EN/TL Guide section "ESP32 Main Unit and Backup".
+- **Tests:**
+  - host C++ (protocol, charge logic, backup splitter) all pass;
+  - `vendo_test.py` 162/162 (adds backup/restore and pin choices);
+  - regression 103/103.
+
 ## v2.0.0-dev - 2026-09-30 - Charging Station (part 2 of v2)
 
 Spec: `docs/superpowers/specs/2026-09-30-charging-station-design.md`;

@@ -13,7 +13,7 @@
 #define MIKROTIK_API_H
 
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
+#include "platform.h"
 #include <vector>
 #include "config.h"
 

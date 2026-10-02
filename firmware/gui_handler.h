@@ -12,7 +12,7 @@
 #define GUI_HANDLER_H
 
 #include <Arduino.h>
-#include <ESP8266WebServer.h>
+#include "platform.h"
 #include <ArduinoJson.h>
 #include <sys/time.h>
 #include "config.h"
@@ -28,7 +28,7 @@
 
 class GUIHandler {
 public:
-  void begin(ESP8266WebServer& server, SessionManager& sessions, AdminAPI& admin,
+  void begin(ZxWebServer& server, SessionManager& sessions, AdminAPI& admin,
              PPPoEManager& pppoe, QoSManager& qos, MikrotikAPI& api, TelegramNotifier& telegram) {
     _server = &server;
     _sessions = &sessions;
@@ -43,7 +43,12 @@ public:
     // collectHeaders() is a variadic template on this core version - each
     // header name is its own argument, not an array+count pair.
     // X-ZX-Sig: the sub-vendo protocol's signature (vendo_api.h).
+#if defined(ESP32)
+    static const char* headers[] = {"X-Admin-Username", "X-Admin-Password", "X-Client-Time", ZX_SIG_HEADER};
+    _server->collectHeaders(headers, 4);
+#else
     _server->collectHeaders("X-Admin-Username", "X-Admin-Password", "X-Client-Time", ZX_SIG_HEADER);
+#endif
 
     _server->on("/api/health", HTTP_GET, [this]() { handleHealth(); });
     _server->on("/api/branding", HTTP_GET, [this]() { handleBranding(); });
@@ -109,6 +114,40 @@ public:
   void replyError(int code, const String& message) { sendError(code, message); }
   void replyOk() { sendOk(); }
   AdminAccount* authAdmin(bool requireSuper = false) { return requireAdmin(requireSuper); }
+  void streamBytes(const char* p, size_t n) { _server->sendContent(p, n); }
+
+  // Like requireAdmin() but doesn't reply - for upload handlers, which may
+  // only answer once the whole body is in. status: 401/403/429 on failure.
+  AdminAccount* checkAdmin(bool requireSuper, int& status, String& error) {
+    uint32_t ip = clientIp();
+    if (isLockedOut(ip)) {
+      status = 429;
+      error = "too_many_attempts";
+      return nullptr;
+    }
+    AdminAccount* a = _admin->checkAdminLogin(_server->header("X-Admin-Username"), _server->header("X-Admin-Password"));
+    if (!a) {
+      recordLoginFailure(ip);
+      status = 401;
+      error = "unauthorized";
+      return nullptr;
+    }
+    recordLoginSuccess(ip);
+    if (requireSuper && a->role != "super") {
+      status = 403;
+      error = "super_admin_required";
+      return nullptr;
+    }
+    status = 0;
+    error = "";
+    return a;
+  }
+
+  // The coin/relay pin labels this board offers (Settings > Coin Slot).
+  static void addPinChoices(JsonDocument& doc) {
+    JsonArray pins = doc.createNestedArray("pinChoices");
+    for (size_t i = 0; i < ZX_PIN_COUNT; i++) pins.add(ZX_PIN_LABELS[i]);
+  }
   void streamBegin() { beginStream(); }
   void streamJsonItem(const JsonDocument& item, bool& first) { streamItem(item, first); }
   void streamRaw(const String& text) { _server->sendContent(text); }
@@ -118,7 +157,7 @@ public:
   void (*onCoinPinsChanged)() = nullptr;
 
 private:
-  ESP8266WebServer* _server = nullptr;
+  ZxWebServer* _server = nullptr;
   SessionManager* _sessions = nullptr;
   AdminAPI* _admin = nullptr;
   PPPoEManager* _pppoe = nullptr;
@@ -294,11 +333,12 @@ private:
   // ---- Public endpoints -----------------------------------------------
 
   void handleHealth() {
-    DynamicJsonDocument doc(192);
+    DynamicJsonDocument doc(384);
     doc["mikrotik"] = _mikrotikReachable;
     doc["uptimeMs"] = millis();
     doc["fw"] = FIRMWARE_VERSION;
     doc["board"] = BOARD_NAME;
+    addPinChoices(doc);
     doc["freeHeap"] = ESP.getFreeHeap();
     sendJson(200, doc);
   }
@@ -916,6 +956,8 @@ private:
     }
     out["chargeMaxMinutes"] = _admin->chargeMaxMinutes;
     out["chargeLang"] = _admin->chargeLang;
+    out["board"] = BOARD_NAME;
+    addPinChoices(out);
     sendJson(200, out);
   }
 

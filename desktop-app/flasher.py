@@ -78,7 +78,10 @@ class FlashJob:
     progress (0-100, or None if indeterminate) to the given callbacks."""
 
     def __init__(self, port, firmware_path, on_line, on_progress, on_done, baud=460800, erase_all=False,
-                 on_mac=None):
+                 on_mac=None, chip="esp8266"):
+        # chip: "esp8266" (NodeMCU) or "esp32" - esptool then refuses the
+        # wrong board instead of writing an image that can't boot on it.
+        self.chip = chip
         # esptool prints the chip's MAC while connecting, so a flash also
         # identifies the device - no separate scan needed.
         self.on_mac = on_mac
@@ -101,7 +104,7 @@ class FlashJob:
         self._thread.start()
 
     def _run(self):
-        cmd = _self_invoke_prefix() + [ESPTOOL_WORKER_ARG, "-c", "esp8266", "-p", self.port,
+        cmd = _self_invoke_prefix() + [ESPTOOL_WORKER_ARG, "-c", self.chip, "-p", self.port,
                                         "-b", str(self.baud), "write-flash"]
         if self.erase_all:
             cmd.append("--erase-all")
@@ -116,6 +119,9 @@ class FlashJob:
                 if not line:
                     continue
                 self.on_line(line)
+                if "Wrong --chip" in line or "Wrong chip" in line or "not " + self.chip.upper() in line.upper():
+                    self.on_line(">>> This board is not " + ("an ESP32" if self.chip == "esp32" else "a NodeMCU (ESP8266)") +
+                                 " - pick the matching Device type in the Flash tab and try again.")
                 mac = _MAC_RE.search(line.strip())
                 if mac and self.on_mac:
                     self.on_mac(mac.group(1).lower())
@@ -174,7 +180,8 @@ class DeviceProbe:
         output = ""
         try:
             self._proc = subprocess.Popen(
-                _self_invoke_prefix() + [ESPTOOL_WORKER_ARG, "-c", "esp8266", "-p", self.port, "read-mac"],
+                # "auto": Scan Device works on a NodeMCU and an ESP32 alike.
+                _self_invoke_prefix() + [ESPTOOL_WORKER_ARG, "-c", "auto", "-p", self.port, "read-mac"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )

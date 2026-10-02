@@ -21,6 +21,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from email.parser import BytesParser
+from email.policy import default as email_policy
 
 import zx_protocol as zx  # tools/ - the signed sub-vendo protocol
 
@@ -408,6 +410,100 @@ def is_int(x):
     return isinstance(x, int) and not isinstance(x, bool)
 
 
+# ---- Backup / Restore - mirrors firmware/backup_api.h --------------------------
+BOARD_PIN_CHOICES = ["D1", "D2", "D5", "D6", "D7"]   # firmware/platform.h, ESP8266
+BACKUP_NAMES = ("config.json", "vouchers.json", "subscribers.json", "admins.json", "activity.json",
+                "sales.json", "today.json", "sessions.json", "vendos.json", "collections.json")
+RESTORE_MAX_BYTES = 1024 * 1024
+VENDO_RUNTIME = ("lastSeen", "lastN", "offlineLogged", "portSecs", "portSecsAt", "stops")
+
+
+def vendo_to_json(v):
+    out = {k: val for k, val in v.items() if k not in VENDO_RUNTIME}
+    if out.get("key") is not None:
+        out["key"] = out["key"].hex()
+    return out
+
+
+def vendo_from_json(o):
+    vid = o.get("id", 0)
+    if vid == 0:
+        return {"id": 0, "name": o.get("name", "Main"), "boxTotal": o.get("boxTotal", 0),
+                "commissionPct": o.get("commissionPct", 0)}
+    v = new_sub_vendo(vid, o.get("name", f"Vendo {vid}"), o.get("type", "wifi"))
+    v.update({k: val for k, val in o.items() if k != "key" and k not in VENDO_RUNTIME})
+    v["key"] = bytes.fromhex(o["key"]) if o.get("key") else None
+    return v
+
+
+def build_backup():
+    """The same shape the firmware streams (network.json is never included)."""
+    stats = dict(admin_stats, coinByVendo={str(k): val for k, val in admin_stats["coinByVendo"].items()})
+    return {"zxheifiBackup": 1, "fw": FIRMWARE_VERSION, "board": BOARD, "createdAt": int(time.time()),
+            "files": {
+                "config.json": {"settings": settings, "rateProfiles": rate_profiles, "blockedMacs": blocked_macs},
+                "vouchers.json": vouchers, "subscribers.json": subscribers, "admins.json": admins,
+                "activity.json": activity_log, "sales.json": sales_history, "today.json": stats,
+                "sessions.json": sessions,
+                "vendos.json": [vendo_to_json(v) for _, v in sorted(vendos.items())],
+                "collections.json": collections}}
+
+
+def check_backup(raw):
+    """Returns (backup, "") or (None, error) - same rules as BackupSplitter."""
+    try:
+        doc = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, "bad_backup"
+    if not isinstance(doc, dict):
+        return None, "bad_backup"
+    files = doc.get("files", {})
+    if not isinstance(files, dict) or not all(
+            name in BACKUP_NAMES and isinstance(val, (dict, list)) for name, val in files.items()):
+        return None, "bad_backup"
+    if doc.get("zxheifiBackup") != 1 or isinstance(doc.get("zxheifiBackup"), bool):
+        return None, "not_a_backup"
+    return doc, ""
+
+
+def apply_backup(doc):
+    files = doc.get("files", {})
+    if "config.json" in files:
+        cfg = files["config.json"]
+        settings.update(cfg.get("settings", {}))
+        if "rateProfiles" in cfg:
+            rate_profiles[:] = cfg["rateProfiles"]
+        if "blockedMacs" in cfg:
+            blocked_macs[:] = cfg["blockedMacs"]
+    for name, target in (("vouchers.json", vouchers), ("subscribers.json", subscribers), ("admins.json", admins),
+                         ("sessions.json", sessions)):
+        if name in files:
+            target.clear()
+            target.update(files[name])
+    for name, target in (("activity.json", activity_log), ("sales.json", sales_history),
+                         ("collections.json", collections)):
+        if name in files:
+            target[:] = files[name]
+    if "today.json" in files:
+        stats = dict(files["today.json"])
+        stats["coinByVendo"] = {int(k): val for k, val in stats.get("coinByVendo", {}).items()}
+        admin_stats.update(stats)
+    if "vendos.json" in files:
+        vendos.clear()
+        for o in files["vendos.json"]:
+            v = vendo_from_json(o)
+            vendos[v["id"]] = v
+        if 0 not in vendos:
+            vendos[0] = {"id": 0, "name": "Main", "boxTotal": 0, "commissionPct": 0}
+        slots.clear()
+        slots[0] = new_slot()
+        for vid, v in vendos.items():
+            if vid and not is_charging(v):
+                slots[vid] = new_slot()
+        pending_pairs.clear()
+    log_event("restore", f"backup restored ({len(files)} files, from {doc.get('board', '?')})")
+
+
 def log_event(event_type, detail):
     activity_log.append({"epoch": int(time.time()), "type": event_type, "detail": detail})
     if len(activity_log) > 300:
@@ -580,7 +676,8 @@ class Handler(BaseHTTPRequestHandler):
         vendo_tick()
 
         if path == "/api/health":
-            self._json(200, {"mikrotik": True, "uptimeMs": int(time.time() * 1000), "fw": FIRMWARE_VERSION})
+            self._json(200, {"mikrotik": True, "uptimeMs": int(time.time() * 1000), "fw": FIRMWARE_VERSION,
+                             "board": BOARD, "pinChoices": BOARD_PIN_CHOICES})
         elif path == "/api/branding":
             self._json(200, {"brandName": settings["brandName"], "brandColor": settings["brandColor"],
                               "soundEnabled": settings["soundEnabled"], "announcement": settings["announcement"],
@@ -723,7 +820,21 @@ class Handler(BaseHTTPRequestHandler):
             admin = self._require_admin(require_super=True)
             if not admin:
                 return
-            self._json(200, settings)
+            self._json(200, dict(settings, board=BOARD, pinChoices=BOARD_PIN_CHOICES))
+        elif path == "/api/admin/backup":
+            admin = self._require_admin(require_super=True)
+            if not admin:
+                return
+            body = json.dumps(build_backup()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="zxheifi-backup-{time.strftime("%Y-%m-%d")}.json"')
+            self.send_header("Content-Length", str(len(body)))
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+            log_event("backup_downloaded", f"by {admin['username']}")
         else:
             self._serve_static(path)
 
@@ -1148,6 +1259,33 @@ class Handler(BaseHTTPRequestHandler):
             if not v:
                 return
             self._signed(200, dict(vendo_config(v), n=n), v["key"])
+        elif path == "/api/admin/restore":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b""
+            admin = self._require_admin(require_super=True)
+            if not admin:
+                return
+            ctype = self.headers.get("Content-Type", "")
+            data = None
+            if ctype.startswith("multipart/form-data"):
+                msg = BytesParser(policy=email_policy).parsebytes(
+                    b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + body)
+                for part in msg.iter_parts():
+                    if part.get_param("name", header="content-disposition") == "backup":
+                        data = part.get_payload(decode=True) or b""
+            if data is None:
+                self._json(400, {"error": "no_file"})
+                return
+            if len(data) > RESTORE_MAX_BYTES:
+                self._json(400, {"error": "backup_too_large"})
+                return
+            doc, err = check_backup(data)
+            if err:
+                self._json(400, {"error": err})
+                return
+            apply_backup(doc)
+            self._json(200, {"ok": True, "rebootInMs": 1500, "fromBoard": doc.get("board", ""),
+                             "files": list(doc.get("files", {}))})
         elif path == "/api/admin/vendos/add":
             if not self._require_admin(require_super=True):
                 return
